@@ -4,10 +4,16 @@ r"""Перевірки чистих функцій слухача (без мод
   & "$env:USERPROFILE\.claude\voice-mod\venv\Scripts\python.exe" dev/words_check.py
 """
 
+import http.server
 import importlib.util
 import json
 import os
+import re
+import subprocess
+import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 path = Path(__file__).resolve().parent.parent / "listener" / "listener.py"
@@ -225,4 +231,264 @@ assert L.cancel_active(texts=[], armed=False, early_hit=False)
 assert L.cancel_active(texts=None, armed=True, early_hit=False)
 assert L.cancel_active(texts=None, armed=False, early_hit=True)
 assert not L.cancel_active(texts=None, armed=False, early_hit=False)
+
+# ---------------------------------------------------------------- озвучення (speech.py)
+root = Path(__file__).resolve().parent.parent
+spec_s = importlib.util.spec_from_file_location("speech_mod", root / "listener" / "speech.py")
+S = importlib.util.module_from_spec(spec_s)
+spec_s.loader.exec_module(S)
+
+# Ліцензійна межа: мод Piper не імпортує, лише запускає окремим процесом.
+for f in (root / "listener").glob("*.py"):
+    src = f.read_text("utf-8")
+    assert not re.search(r"^\s*(import|from)\s+piper\b", src, re.M), f
+    assert "piper1-gpl" not in src, f
+
+HF = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
+assert S.voice_urls("uk_UA-mykyta-high") == (
+    f"{HF}/uk/uk_UA/mykyta/high/uk_UA-mykyta-high.onnx",
+    f"{HF}/uk/uk_UA/mykyta/high/uk_UA-mykyta-high.onnx.json")
+assert S.voice_urls("uk_UA-lada-x_low")[0] == f"{HF}/uk/uk_UA/lada/x_low/uk_UA-lada-x_low.onnx"
+assert S.voice_urls("en_US-reza_ibrahim-medium")[1] == (
+    f"{HF}/en/en_US/reza_ibrahim/medium/en_US-reza_ibrahim-medium.onnx.json")
+assert S.voice_urls("en_GB-vctk-medium")[0] == f"{HF}/en/en_GB/vctk/medium/en_GB-vctk-medium.onnx"
+for bad in ("", "uk_UA-mykyta", "../x-y-high", "uk_UA-my/kyta-high", "uk_UA-mykyta-ultra",
+            "uk_UA-a-b-high", None, 5):
+    assert not S.valid_voice(bad), bad
+    try:
+        S.voice_urls(bad)
+        raise AssertionError(f"voice_urls({bad!r}) мала кинути ValueError")
+    except ValueError:
+        pass
+
+# Типові голоси — ті самі, що в hooks/speak.ts (там вони записані як `uk: '…'`).
+speak_ts = (root / "hooks" / "speak.ts").read_text("utf-8")
+assert set(S.DEFAULT_VOICE) == {"uk", "en"}
+for lg, name in S.DEFAULT_VOICE.items():
+    assert f"{lg}: '{name}'" in speak_ts, (lg, name)
+    assert S.valid_voice(name), name
+for lg in S.MSG:  # тексти прогресу — однаковий набір ключів у мовах
+    assert S.MSG[lg].keys() == S.MSG["uk"].keys(), lg
+assert set(S.MSG) == set(L.LANG)
+
+# Свіжість speak.json: новий seq, не старший за 60 с і за старт слухача.
+NOW = 1_800_000_000_000
+STARTED = NOW - 600_000
+assert S.fresh_request({"seq": NOW - 1000, "at": NOW - 1000}, 0, STARTED, NOW)
+assert S.fresh_request({"seq": NOW - 1000, "at": NOW - 1000, "stop": True}, NOW - 5000, STARTED, NOW)
+assert S.fresh_request({"seq": NOW - 60_000, "at": NOW - 60_000}, 0, STARTED, NOW)  # рівно 60 с — ще так
+assert not S.fresh_request({"seq": NOW - 61_000, "at": NOW - 61_000}, 0, STARTED, NOW)  # старий
+assert not S.fresh_request({"seq": STARTED - 1, "at": STARTED - 1}, 0, STARTED, NOW + 10_000)  # до старту
+assert not S.fresh_request({"seq": NOW - 1000, "at": NOW - 1000}, NOW - 1000, STARTED, NOW)  # той самий seq
+assert not S.fresh_request({"seq": NOW - 2000, "at": NOW - 2000}, NOW - 1000, STARTED, NOW)  # старіший seq
+for junk in ({}, {"seq": "x", "at": NOW}, {"seq": NOW, "at": None}, {"seq": True, "at": NOW},
+             {"seq": [NOW], "at": NOW}):
+    assert not S.fresh_request(junk, 0, STARTED, NOW), junk
+
+# Глухота: поки звучить і ще 300 мс після — кадри мікрофона викидаються.
+assert S.deaf(10.0, True, 0.0)
+assert S.deaf(10.0, False, 10.2)
+assert not S.deaf(10.0, False, 9.9)
+assert S.DEAF_TAIL_S == 0.3
+# Озвучка чекає на диктовку/команду не довше 30 с від `at`, далі блок відкидається.
+assert S.speak_action(NOW, NOW - 1000, collecting=False) == "say"
+assert S.speak_action(NOW, NOW - 1000, collecting=True) == "wait"
+assert S.speak_action(NOW, NOW - 30_001, collecting=True) == "drop"
+assert S.speak_action(NOW, NOW - 30_001, collecting=False) == "drop"
+assert S.one_line(" Готово.\n\nТести  пройшли.\t") == "Готово. Тести пройшли."
+
+
+# control.json: speak (типово false), голоси (рядки), ttsInstall/ttsRemove — мітки, не налаштування.
+def control_of(data: dict):
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "control.json").write_text(json.dumps(data), "utf-8")
+        c = L.Control(Path(d))
+        c.poll()
+        return c
+
+
+c = control_of({})
+assert (c.speak, c.speak_voice_uk, c.speak_voice_en, c.tts_install, c.tts_remove) == (False, "", "", 0, 0)
+c = control_of({"speak": True, "speakVoiceUk": " uk_UA-lada-x_low ", "speakVoiceEn": "en_US-mike-medium",
+                "ttsInstall": 1_700_000_000_000, "ttsRemove": 1_700_000_000_001})
+assert (c.speak, c.speak_voice_uk, c.speak_voice_en) == (True, "uk_UA-lada-x_low", "en_US-mike-medium")
+assert (c.tts_install, c.tts_remove) == (1_700_000_000_000, 1_700_000_000_001)
+c = control_of({"speak": "yes", "speakVoiceUk": ["x"], "ttsInstall": "1", "ttsRemove": True})
+assert (c.speak, c.speak_voice_uk, c.tts_install, c.tts_remove) == (False, "", 0, 0)
+with tempfile.TemporaryDirectory() as d:
+    cj = Path(d) / "control.json"
+    cj.write_text('{"beep":"off"}', "utf-8")
+    c = L.Control(Path(d))
+    c.poll()
+    v = c.version
+    cj.write_text('{"beep":"off","ttsInstall":1700000000000,"ttsRemove":1700000000001}', "utf-8")
+    os.utime(cj, (1, 1))
+    c.poll()
+    assert c.tts_install == 1_700_000_000_000 and c.version == v  # мітки — не налаштування
+
+# Підставний tts\: venv без pip, де `-m piper` — фейковий скрипт (справжній Piper тут не потрібен).
+FAKE_PIPER = r'''
+import os, sys, time
+text = sys.stdin.buffer.read()
+mode = os.environ.get("FAKE_PIPER", "")
+if mode == "fail":
+    sys.stderr.write("boom: bad model\n")
+    sys.exit(1)
+n = 50 if mode == "slow" else 1
+for _ in range(n):
+    sys.stdout.buffer.write(b"\x01\x00\x02\x00\x03")  # непарна довжина: спікер мусить доклеїти байт
+    sys.stdout.buffer.flush()
+    if mode == "slow":
+        time.sleep(0.1)
+sys.stdout.buffer.write(b"\x04")
+'''
+
+
+class FakeStream:
+    def __init__(self, rate: int):
+        self.rate, self.data, self.closed, self.aborted, self.stopped = rate, b"", False, False, False
+
+    def write(self, b: bytes) -> None:
+        assert len(b) % 2 == 0, len(b)
+        self.data += bytes(b)
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def abort(self) -> None:
+        self.aborted = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def wait_until(cond, sec: float = 15.0) -> bool:
+    end = time.time() + sec
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+VOICE = "en_US-joe-medium"
+with tempfile.TemporaryDirectory() as d:
+    home = Path(d)
+    venv = home / "tts" / "venv"
+    base = getattr(sys, "_base_executable", None) or sys.executable
+    subprocess.run([base, "-m", "venv", "--without-pip", str(venv)], check=True,
+                   env={k: v for k, v in os.environ.items() if k != "__PYVENV_LAUNCHER__"})
+    site = venv / "Lib" / "site-packages" if os.name == "nt" else next((venv / "lib").glob("*/site-packages"))
+    (site / "piper").mkdir()
+    (site / "piper" / "__init__.py").write_text("", "utf-8")
+    (site / "piper" / "__main__.py").write_text(FAKE_PIPER, "utf-8")
+    voices = home / "tts" / "voices"
+    voices.mkdir()
+    (voices / f"{VOICE}.onnx").write_bytes(b"")
+    (voices / f"{VOICE}.onnx.json").write_text('{"audio": {"sample_rate": 16000}}', "utf-8")
+    (voices / "en_US-mike-medium.onnx.json").write_text("{}", "utf-8")  # без .onnx — не голос
+    (voices / "en_US-sam-medium.onnx.part").write_bytes(b"x")          # недокачаний — не голос
+
+    inst = S.TtsInstaller(home, home / "tts.log")
+    assert inst.voices() == [VOICE], inst.voices()
+    assert not inst.installed()  # venv є, а позначки успішного встановлення — нема
+    assert inst.ensure_voice(VOICE)  # уже на диску — нічого не качає
+    assert inst.progress() is None and inst.take() == []
+
+    # Нема пристрою виводу: помилка, а не вічне «говорю».
+    def no_device(rate: int):
+        raise OSError("no output device")
+
+    sp = S.Speaker(home, open_stream=no_device)
+    sp.say("Hello there.", VOICE)
+    assert wait_until(lambda: not sp.busy()), "спікер завис без пристрою виводу"
+    err = sp.take_error()
+    assert err and "no output device" in err, err
+    assert sp.take_error() is None
+
+    # Звичайне відтворення: усі байти, парними шматками, частота з .onnx.json, глухота +0.3 с.
+    streams: list[FakeStream] = []
+
+    def fake_stream(rate: int) -> FakeStream:
+        streams.append(FakeStream(rate))
+        return streams[-1]
+
+    sp = S.Speaker(home, open_stream=fake_stream)
+    sp.say("Hello there.", VOICE)
+    assert sp.busy()
+    assert wait_until(lambda: not sp.busy())
+    assert sp.take_error() is None
+    assert len(streams) == 1 and streams[0].rate == 16000 and streams[0].data == b"\x01\x00\x02\x00\x03\x04"
+    assert streams[0].stopped and streams[0].closed and not streams[0].aborted
+    assert time.time() < sp.deaf_until <= time.time() + 0.31
+
+    # stop(): процес убито, звук обірвано, busy одразу False, без помилки.
+    os.environ["FAKE_PIPER"] = "slow"
+    try:
+        sp.say("A long one.", VOICE)
+        assert wait_until(lambda: len(streams) == 2 and streams[1].data)
+        t = time.time()
+        sp.stop()
+        assert not sp.busy() and t < sp.deaf_until <= time.time() + 0.31
+        assert wait_until(lambda: streams[1].closed, 5)
+        assert streams[1].aborted and len(streams[1].data) < 100
+        assert sp.take_error() is None
+        # Новий блок, поки звучить попередній, — попередній обірвано, новий звучить.
+        sp.say("First.", VOICE)
+        assert wait_until(lambda: len(streams) == 3 and streams[2].data)
+        sp.say("Second.", VOICE)
+        assert sp.busy()
+        assert wait_until(lambda: streams[2].closed, 5) and streams[2].aborted
+        assert wait_until(lambda: len(streams) == 4 and streams[3].data)
+        sp.stop()
+        sp.stop()  # повторний stop — нічого
+        os.environ["FAKE_PIPER"] = "fail"  # Piper упав (битий голос): помилка з причиною
+        sp.say("Broken.", VOICE)
+        assert wait_until(lambda: not sp.busy())
+        err = sp.take_error()
+        assert err and "boom: bad model" in err, err
+    finally:
+        os.environ.pop("FAKE_PIPER", None)
+    sp.say("No such voice.", "en_US-kristin-medium")  # голосу нема на диску
+    assert wait_until(lambda: not sp.busy())
+    assert sp.take_error()
+
+    # Докачка голосу: та сама схема URL (тут — локальний сервер), спершу .part, потім перейменування.
+    srv_root = home / "srv"
+    name = "uk_UA-lada-x_low"
+    rel = Path("uk/uk_UA/lada/x_low")
+    (srv_root / rel).mkdir(parents=True)
+    (srv_root / rel / f"{name}.onnx").write_bytes(b"o" * 300_000)
+    (srv_root / rel / f"{name}.onnx.json").write_text('{"audio": {"sample_rate": 22050}}', "utf-8")
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(srv_root), **kw)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    S.VOICES_URL = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        assert not inst.ensure_voice(name)  # нема — почала качати
+        assert not inst.ensure_voice(name)  # уже качає — не вдруге
+        assert wait_until(lambda: inst.take_voices() == [(name, None)])
+        assert inst.voices() == sorted([VOICE, name]) and inst.ensure_voice(name)
+        assert S.sample_rate(voices / f"{name}.onnx") == 22050
+        assert not list(voices.glob(f"{name}*.part"))
+        missing = "uk_UA-tetiana-high"
+        assert not inst.ensure_voice(missing)
+        got: list = []
+        assert wait_until(lambda: bool(got.extend(inst.take_voices()) or got))
+        assert got[0][0] == missing and got[0][1], got
+        assert not list(voices.glob(f"{missing}*")), list(voices.iterdir())
+    finally:
+        srv.shutdown()
+        S.VOICES_URL = HF
+
+    # Видалення: тека tts\ зникає цілком.
+    assert inst.remove() is None
+    assert not (home / "tts").exists() and inst.voices() == [] and not inst.installed()
 print("words ok")

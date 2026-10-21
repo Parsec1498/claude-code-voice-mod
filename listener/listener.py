@@ -1,10 +1,11 @@
 """Голосовий слухач для мода `voice`: мікрофон -> слово-активатор -> команда.
 
 Пише в stdout JSON-рядки (одна подія на рядок), мод читає їх потоком:
-  {"t": "state", "state": "loading|ready|armed|transcribing|muted|error", "msg": ...}
+  {"t": "state", "state": "loading|ready|armed|transcribing|speaking|muted|error", "msg": ...}
   {"t": "ignored", "text": ...}   мова без слова-активатора (лише перший шматок)
   {"t": "part", "text": ...}      проміжна фраза диктовки (лише в історію)
   {"t": "cancelled", "text": ...} команду скасовано словом скасування (text — зібране, може бути порожнім)
+  {"t": "spoke", "text": ...}     озвучено блок «🔊» відповіді (стан тим часом — speaking)
   {"t": "command", "text": ..., "raw": ..., "ms": ...}
   {"t": "log", "msg": ...}
 
@@ -67,6 +68,9 @@ class Bus:
         # Для списків моделей у ⚙: пристрій (типові залежать від нього) і що вже на диску.
         self.device: str | None = None
         self.models: list[str] = []
+        # Озвучення: absent | installing | ready | error, і голоси Piper на диску.
+        self.tts = "absent"
+        self.voices: list[str] = []
         self.events: list[dict] = []
         self.seq = 0
         try:
@@ -100,6 +104,8 @@ class Bus:
             self._add("part", text=event.get("text"))
         elif kind == "cancelled":
             self._add("cancelled", text=event.get("text") or "")
+        elif kind == "spoke":
+            self._add("spoke", text=event.get("text"))
         elif kind == "log":
             self._add("info", text=event.get("msg"))
         self.flush()
@@ -122,7 +128,8 @@ class Bus:
     def _flush(self) -> None:
         data = {"pid": os.getpid(), "at": int(time.time() * 1000),
                 "state": self.state, "msg": self.msg, "seq": self.seq,
-                "device": self.device, "models": self.models, "events": self.events}
+                "device": self.device, "models": self.models, "tts": self.tts,
+                "voices": self.voices, "events": self.events}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
         for _ in range(10):  # читач тримає файл відкритим мить — Windows не дасть replace
@@ -369,6 +376,11 @@ LANG: dict[str, dict[str, str]] = {
         "download_error": "завантаження {name}: {err}",
         "not_found": "після завантаження моделі нема на диску",
         "chosen_failed": "{names} не вантажиться на {device}: {err} — беру типові",
+        "tts_error": "озвучення: {err}",
+        "tts_ready": "озвучення встановлено",
+        "tts_voice": "качаю голос {name} — цей блок не озвучено",
+        "tts_voice_error": "голос {name}: {err}",
+        "tts_dropped": "озвучку пропущено: команда триває довше {sec} с",
     },
     "en": {
         "wake": "claude,clod,cloud,clawed",
@@ -401,6 +413,11 @@ LANG: dict[str, dict[str, str]] = {
         "download_error": "download {name}: {err}",
         "not_found": "model is not on disk after download",
         "chosen_failed": "{names} failed to load on {device}: {err} — using defaults",
+        "tts_error": "speech: {err}",
+        "tts_ready": "speech installed",
+        "tts_voice": "downloading voice {name} — this block is not spoken",
+        "tts_voice_error": "voice {name}: {err}",
+        "tts_dropped": "speech skipped: the command took longer than {sec} s",
     },
 }
 
@@ -663,6 +680,12 @@ class Control:
         self.hotwords = ""     # свої слова-підказки; порожньо — загальні
         self.wake_model = ""   # мала модель (активатор); порожньо — типова для пристрою
         self.model = ""        # велика модель (команда); порожньо — типова для пристрою
+        # Озвучення відповідей (опційний модуль Piper, listener/speech.py).
+        self.speak = False         # озвучувати блок «🔊» з відповіді власника голосу
+        self.speak_voice_uk = ""   # голос Piper для українських блоків; порожньо — типовий
+        self.speak_voice_en = ""   # … для англійських
+        self.tts_install = 0.0     # мітка (мс) натиску «Встановити озвучення»; не налаштування
+        self.tts_remove = 0.0      # мітка (мс) натиску «Видалити озвучення»; не налаштування
         self.version = 0       # росте на кожній зміні налаштувань
 
     def poll(self) -> bool:
@@ -679,6 +702,8 @@ class Control:
             muted = bool(data.get("muted"))
             self.restart = float(data.get("restart") or 0)
             self.cancel_at = num_of(data.get("cancelAt"))
+            self.tts_install = num_of(data.get("ttsInstall"))
+            self.tts_remove = num_of(data.get("ttsRemove"))
             beep = data.get("beep") if data.get("beep") in ("off", "wake", "end", "both") else "end"
             auto_end = data.get("autoEnd") is not False
             wake = str(data.get("wake") or "").strip()
@@ -689,13 +714,19 @@ class Control:
             hotwords = str(data.get("hotwords") or "").strip()
             wake_model = text_of(data.get("wakeModel"))
             model = text_of(data.get("model"))
+            speak = data.get("speak") is True
+            speak_voice_uk = text_of(data.get("speakVoiceUk"))
+            speak_voice_en = text_of(data.get("speakVoiceEn"))
         except (OSError, ValueError, TypeError, AttributeError):
             return False
-        new = (beep, auto_end, wake, stop, cancel, prompt, hotwords, language, wake_model, model)
+        new = (beep, auto_end, wake, stop, cancel, prompt, hotwords, language, wake_model, model,
+               speak, speak_voice_uk, speak_voice_en)
         if new != (self.beep, self.auto_end, self.wake, self.stop, self.cancel, self.prompt,
-                   self.hotwords, self.language, self.wake_model, self.model):
+                   self.hotwords, self.language, self.wake_model, self.model,
+                   self.speak, self.speak_voice_uk, self.speak_voice_en):
             (self.beep, self.auto_end, self.wake, self.stop, self.cancel, self.prompt,
-             self.hotwords, self.language, self.wake_model, self.model) = new
+             self.hotwords, self.language, self.wake_model, self.model,
+             self.speak, self.speak_voice_uk, self.speak_voice_en) = new
             self.version += 1
         changed, self.muted = muted != self.muted, muted
         return changed
@@ -824,6 +855,15 @@ def main() -> int:
         return BUSY_EXIT
     BUS = Bus(home)
 
+    # Озвучення (опційний модуль): стан модуля — у шину ще до моделей, щоб ⚙ бачило
+    # «встановлено/ні» і при вимкненому мікрофоні.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import speech
+    installer = speech.TtsInstaller(home, home / "tts.log")
+    speaker = speech.Speaker(home)
+    BUS.tts = "ready" if installer.installed() else "absent"
+    BUS.voices = installer.voices()
+
     emit(t="state", state="loading", msg=tr("loading"))
     t0 = time.time()
     error_until = 0.0  # до цієї миті рядок показує помилку, а не «готовий»
@@ -831,7 +871,6 @@ def main() -> int:
         import sounddevice as sd
         from faster_whisper import WhisperModel
 
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
         import processor
         processor.PERSONAL = home / "glossary.txt"  # свій словник — поза кодом мода
 
@@ -1042,6 +1081,15 @@ def main() -> int:
     # (інакше слухач крутився б у помилці кожні 5 с).
     downloader = Downloader(home / "download.log")
     failed_sel = selection_of(control.language, control.wake_model, control.model)
+    # Озвучення: мітки кнопок (старші за запуск — не рахуються), speak.json за mtime,
+    # блок, що чекає кінця диктовки, і вибір голосів (зміна = згода на докачку).
+    tts_install_done = tts_remove_done = born
+    speak_path = home / "speak.json"
+    speak_mtime = -1.0
+    speak_seq = 0.0
+    pending_say: dict | None = None
+    spoken = ""  # текст, що звучить
+    voice_sel = (control.speak_voice_uk, control.speak_voice_en)
 
     def state(name: str, msg: str | None = None):
         nonlocal last_state
@@ -1127,6 +1175,99 @@ def main() -> int:
             cue("end")
         emit(t="cancelled", text=text)
 
+    def chosen_voice(lg: str) -> str:
+        """Голос мови з ⚙ або типовий (порожній чи не назва голосу — типовий)."""
+        name = control.speak_voice_uk if lg == "uk" else control.speak_voice_en
+        return name if speech.valid_voice(name) else speech.DEFAULT_VOICE[lg]
+
+    def stop_speaking() -> None:
+        nonlocal pending_say
+        pending_say = None
+        speaker.stop()
+
+    def tts_tick() -> None:
+        """Кнопки модуля, результати встановлення/докачки, запити speak.json — щоітерації,
+        і при вимкненому мікрофоні теж (встановлення — хвилини, stop — миттєвий)."""
+        nonlocal tts_install_done, tts_remove_done, error_until, voice_sel
+        if control.tts_remove > tts_remove_done:
+            tts_remove_done = control.tts_remove
+            stop_speaking()
+            err = installer.remove()
+            BUS.tts, BUS.voices = "absent", installer.voices()
+            BUS.flush()
+            if err is not None:
+                error_until = time.time() + 5
+                state("error", tr("tts_error", err=err))
+        if control.tts_install > tts_install_done:
+            tts_install_done = control.tts_install
+            if installer.start(chosen_voice(lang())):
+                BUS.tts = "installing"
+                BUS.flush()
+        for err in installer.take():
+            BUS.voices = installer.voices()
+            if err is None and installer.installed():
+                BUS.tts = "ready"
+                emit(t="log", msg=tr("tts_ready"))
+            else:
+                BUS.tts = "error"
+                error_until = time.time() + 5
+                state("error", tr("tts_error", err=err or "?"))
+            BUS.flush()
+        for name, err in installer.take_voices():
+            BUS.voices = installer.voices()
+            BUS.flush()
+            if err is not None:
+                error_until = time.time() + 5
+                state("error", tr("tts_voice_error", name=name, err=err))
+        sel = (control.speak_voice_uk, control.speak_voice_en)
+        if sel != voice_sel:
+            # Вибір голосу в ⚙ — згода на його докачку: качаємо одразу, а не на першому блоці.
+            if BUS.tts == "ready":
+                for old, new in zip(voice_sel, sel, strict=True):
+                    if new != old and speech.valid_voice(new):
+                        installer.ensure_voice(new)
+            voice_sel = sel
+        if not control.speak:
+            stop_speaking()
+        err = speaker.take_error()
+        if err is not None:
+            error_until = time.time() + 5
+            state("error", tr("tts_error", err=err))
+        poll_speak()
+
+    def poll_speak() -> None:
+        nonlocal speak_mtime, speak_seq, pending_say
+        try:
+            m = speak_path.stat().st_mtime
+        except OSError:
+            return
+        if m == speak_mtime:
+            return
+        speak_mtime = m
+        try:
+            data = json.loads(speak_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            speak_mtime = -1.0  # файл саме переписують — перечитаємо наступної ітерації
+            return
+        if not isinstance(data, dict):
+            return
+        if not speech.fresh_request(data, speak_seq, born, time.time() * 1000):
+            return  # старий, до запуску слухача чи вже оброблений (↻ не повторює блок)
+        speak_seq = num_of(data.get("seq"))
+        if data.get("stop"):
+            stop_speaking()  # нічого не звучить — нічого й не робить
+            return
+        text = speech.one_line(text_of(data.get("text")))
+        if not text or not control.speak or control.muted or BUS.tts != "ready":
+            return
+        lg = data.get("lang") if data.get("lang") in ("uk", "en") else lang()
+        voice = data.get("voice")
+        voice = voice if speech.valid_voice(voice) else chosen_voice(lg)
+        if not installer.ensure_voice(voice):
+            emit(t="log", msg=tr("tts_voice", name=voice))  # качає фоном; цей блок — ні
+            return
+        pending_say = {"text": text, "voice": voice, "at": num_of(data.get("at"))}
+
     def finish_phrase(audio: np.ndarray, started: float, wake_known: bool, cued: bool = False) -> None:
         """Фраза з активатором (або після голого «Клоде») → команда чи початок диктування."""
         nonlocal armed_until, texts, raws, collect_since
@@ -1209,6 +1350,7 @@ def main() -> int:
             refresh_words()
             if BUS is not None:
                 BUS.beat()
+            tts_tick()
             if control.restart > born:
                 state("off", tr("restart"))
                 return 0  # сесії побачать «off» і піднімуть нового
@@ -1219,6 +1361,7 @@ def main() -> int:
                     state("off", tr("no_sessions"))
                     return 0
             if control.muted:
+                stop_speaking()
                 if stream is not None:
                     stream.close()
                     stream = None
@@ -1227,7 +1370,8 @@ def main() -> int:
                     while not frames.empty():
                         frames.get_nowait()
                 muted_since = muted_since or now
-                if not args.file and now - muted_since > args.muted_exit:
+                # Встановлення озвучення триває хвилини — посеред нього не виходимо.
+                if not args.file and now - muted_since > args.muted_exit and not installer.running():
                     # Хвилина запасу — на випадкове натискання; далі процес не
                     # тримає ні ~2.4 ГБ відеопам'яті, ні пам'яті взагалі. Увімкнуть
                     # мікрофон — мод підніме слухача заново (~20 с моделі).
@@ -1293,6 +1437,7 @@ def main() -> int:
                 stop_collect()
             armed = time.time() < armed_until
             if cancel_pressed(fresh=False):  # control.poll() цієї ітерації вже був
+                stop_speaking()  # ✖ обриває й озвучку
                 # Кнопка ✖: скасувати те, що триває; нічого не триває — лише мітка.
                 if cancel_active(texts, armed, early_hit):
                     whole = " ".join(texts or [])
@@ -1304,11 +1449,33 @@ def main() -> int:
                             frames.get_nowait()
                     cancel_command(whole)
                     continue
+            if pending_say is not None:
+                # Людину не перебиваємо: блок чекає кінця диктовки/команди (≤ 30 с від `at`).
+                act = speech.speak_action(time.time() * 1000, pending_say["at"],
+                                          texts is not None or seg.buf is not None or early_hit or armed)
+                if act == "drop":
+                    pending_say = None
+                    emit(t="log", msg=tr("tts_dropped", sec=speech.WAIT_MS // 1000))
+                elif act == "say":
+                    spoken = pending_say["text"]
+                    speaker.say(spoken, pending_say["voice"])
+                    pending_say = None
+                    emit(t="spoke", text=spoken)
+            if speech.deaf(time.time(), speaker.busy(), speaker.deaf_until):
+                # Слухач не чує сам себе: поки звучить і ще 300 мс після — кадри мікрофона
+                # викидаються, фраза не накопичується (як при mute).
+                while not frames.empty():
+                    frames.get_nowait()
+                seg.reset()
+                if speaker.busy() and time.time() >= error_until:
+                    state("speaking", tail(spoken))
+                time.sleep(0.05)
+                continue
             speaking = seg.buf is not None
             if texts is None and not speaking and not early_hit and time.time() >= error_until:
                 got = downloader.progress()
                 hint = (tr("download", name=got[0], gb=got[1] / 1e9) if got
-                        else tr("ready", wake=wake_word))
+                        else installer.progress(lang()) or tr("ready", wake=wake_word))
                 state("armed" if armed else "ready", None if armed else hint)
             try:
                 frame = frames.get(timeout=0.3)
@@ -1403,6 +1570,8 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        speaker.stop()
+        installer.abort()
         if stream is not None:
             stream.close()
         if BUS is not None:
