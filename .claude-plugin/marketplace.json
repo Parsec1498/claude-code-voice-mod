@@ -1,0 +1,23 @@
+{
+  "name": "claude-code-voice-mod",
+  "description": "Hands-free voice commands for Claude Code with local Whisper speech recognition.",
+  "owner": {
+    "name": "Lord",
+    "url": "https://github.com/Parsec1498"
+  },
+  "plugins": [
+    {
+      "name": "voice-mod",
+      "displayName": "Voice Mod",
+      "source": "./",
+      "description": "Hands-free voice commands with local Whisper recognition (Ukrainian/English). Windows only.",
+      "category": "productivity",
+      "tags": [
+        "voice",
+        "speech",
+        "whisper",
+        "accessibility"
+      ]
+    }
+  ]
+}

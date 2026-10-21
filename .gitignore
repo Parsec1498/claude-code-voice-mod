@@ -1,0 +1,9 @@
+# Типи, які рушій Claude Code кладе поруч із модом при завантаженні.
+.claude-plugin/types/
+__pycache__/
+.ruff_cache/
+*.pyc
+*.log
+.DS_Store
+# Особисті дозволи Claude Code — не для репозиторію.
+.claude/settings.local.json

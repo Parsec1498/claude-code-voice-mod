@@ -1,0 +1,27 @@
+{
+  "name": "voice-mod",
+  "displayName": "Voice Mod",
+  "version": "0.4.0",
+  "description": "Hands-free voice commands for Claude Code on Windows: wake word, local Whisper recognition (Ukrainian/English), live transcript, safe mode for destructive actions, per-chat routing and a project glossary.",
+  "author": {
+    "name": "Lord",
+    "url": "https://github.com/Parsec1498"
+  },
+  "homepage": "https://github.com/Parsec1498/claude-code-voice-mod",
+  "repository": "https://github.com/Parsec1498/claude-code-voice-mod",
+  "documentationUrl": "https://github.com/Parsec1498/claude-code-voice-mod/blob/main/README.md",
+  "supportUrl": "https://github.com/Parsec1498/claude-code-voice-mod/issues",
+  "privacyPolicyUrl": "https://github.com/Parsec1498/claude-code-voice-mod/blob/main/PRIVACY.md",
+  "license": "MIT",
+  "keywords": [
+    "voice",
+    "speech",
+    "whisper",
+    "dictation",
+    "hands-free",
+    "wake-word",
+    "ukrainian",
+    "accessibility"
+  ],
+  "types": "./types/index.d.ts"
+}
