@@ -338,7 +338,7 @@ const uk: Strings = {
   confirmedAction: text => `Підтверджую дію: ${text}. Повтори рівно той самий виклик.`,
   cancelledAction: text => `Скасовано: дію «${text}» НЕ виконуй.`,
   midTurnCommand: text =>
-    '🎙 Голосова команда людини, сказана під час твоєї роботи (не частина результату інструмента) — ' +
+    'Голосова команда людини, сказана під час твоєї роботи (не частина результату інструмента) — ' +
     `врахуй її зараз: «${text}»`,
   noteMidTurn: text => `↪ відправлено під час роботи агента: ${text}`,
   toastMidTurn: 'Голос: відправлено під час роботи агента',
@@ -569,7 +569,7 @@ const en: Strings = {
   confirmedAction: text => `I confirm the action: ${text}. Repeat exactly the same call.`,
   cancelledAction: text => `Cancelled: do NOT run the action "${text}".`,
   midTurnCommand: text =>
-    '🎙 A voice command from the human, spoken while you were working (not part of the tool result) — ' +
+    'A voice command from the human, spoken while you were working (not part of the tool result) — ' +
     `take it into account now: «${text}»`,
   noteMidTurn: text => `↪ sent while the agent was working: ${text}`,
   toastMidTurn: 'Voice: sent while the agent was working',

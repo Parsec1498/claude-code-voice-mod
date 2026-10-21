@@ -90,7 +90,10 @@ function world(on: On, session: string, files: Record<string, string>, replies: 
   const ran: string[] = []
   on('tool.call', async (_$, e) => {
     if (e.tool === 'ListAgents') return { result: { listing: agents.listing } } as never
-    ran.push(String((e as unknown as { command?: string }).command))
+    const command = (e as unknown as { command?: string }).command
+    // «boom» — інструмент перервано (Esc): помилка замість результату.
+    if (command === 'boom') return { isError: true, result: 'Interrupted by user', text: 'Interrupted by user' } as never
+    ran.push(String(command))
     return { result: 'ok' }
   })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
@@ -540,6 +543,7 @@ for (const filterMode of ['off', 'clean'] as const) {
 // наступного виклику інструмента — як повідомлення, набране в чаті під час ходу.
 type Called = { deny?: string; context?: readonly string[] }
 const READ = { tool: 'Read', file_path: 'D:\\Dev\\a.txt' } as never
+const mid = (text: string) => `🎙 ${STR.uk.midTurnCommand(text)}`
 const done = (turnId: string, agentId?: string) =>
   ({ turnId, agentId, reason: 'answer' as const, answer: '', durationMs: 1, isAborted: false })
 
@@ -553,7 +557,7 @@ test('посеред ходу: команда йде з результатом �
   expect(w.submitted).toEqual([]) // агент працює — у чергу, а не prompt.submit
 
   const r = (await $.tool.call(READ)) as Called
-  expect(r.context).toEqual([STR.uk.midTurnCommand('запусти тести')])
+  expect(r.context).toEqual([mid('запусти тести')])
   expect(r.context?.[0]).toMatch(/Голосова команда людини.*«запусти тести»/)
   expect(w.toasts).toContain(STR.uk.toastMidTurn)
   const pane = await $.ui.mount(PANE)
@@ -586,6 +590,44 @@ test('посеред ходу: інструментів більше не бул
   expect(w.submitted).toEqual(['🎙 запусти тести', '🎙 покажи лог'])
 })
 
+test('посеред ходу: перерваний інструмент (помилка) команду не забирає — вона йде після ходу', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'запусти тести' }]))
+  await w.clock.advance(500)
+  const r = (await $.tool.call({ tool: 'Bash', command: 'boom', description: 'x' } as never)) as Called & { isError?: true }
+  expect(r.isError).toBe(true)
+  expect(r.context).toBeUndefined()
+  await $.turn.complete({ ...done('t1'), reason: 'aborted', isAborted: true })
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual(['🎙 запусти тести'])
+})
+
+test('посеред ходу: картку підтверджено, поки хід іде — «Підтверджую дію» контекстом, дозвіл одноразовий', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const rm = { tool: 'Bash', command: 'rm -rf x', description: 'x' } as never
+  await $.turn.start({ text: '🎙 прибери теку x', turnId: 't1' })
+  expect(((await $.tool.call(rm)) as Called).deny).toMatch(/зупинено до підтвердження/)
+
+  const ui = await $.ui.mount(BAND)
+  await w.clock.advance(2000) // свіжу картку кнопкою не підтвердити
+  await ui.press({ key: 'yes' })
+  await ui.unmount()
+  expect(w.submitted).toEqual([]) // хід іде — не prompt.submit
+
+  const r = (await $.tool.call(READ)) as Called
+  expect(r.context).toEqual([mid(STR.uk.confirmedAction('Bash: rm -rf x'))])
+  // Агент повторює той самий виклик у тому ж ході — один раз можна, удруге — знову картка.
+  expect(((await $.tool.call(rm)) as Called).deny).toBeUndefined()
+  expect(w.ran).toContain('rm -rf x')
+  expect(((await $.tool.call(rm)) as Called).deny).toMatch(/зупинено/)
+  expect(w.ran.filter(x => x === 'rm -rf x')).toHaveLength(1)
+})
+
 test('посеред ходу: субагенту команду не підсовуємо — лише головному циклу', { timeoutMs: 15000 }, async ($, on) => {
   const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
   await $.session.start(START)
@@ -600,7 +642,7 @@ test('посеред ходу: субагенту команду не підсо
   await w.clock.advance(500)
   expect(w.submitted).toEqual([])
   const main = (await $.tool.call(READ)) as Called
-  expect(main.context).toEqual([STR.uk.midTurnCommand('запусти тести')])
+  expect(main.context).toEqual([mid('запусти тести')])
 })
 
 test('посеред ходу: власний виклик мода (ListAgents зміни чату) чергу не забирає', { timeoutMs: 15000 }, async ($, on) => {
@@ -614,7 +656,7 @@ test('посеред ходу: власний виклик мода (ListAgents 
   w.fs.set(BUS, bus(T0 + 1000, 3, [{ seq: 3, kind: 'command', text: 'Зміна чату, запуск бота. Перезапусти сервер.' }]))
   await w.clock.advance(500)
   expect(JSON.parse(w.fs.get(OWNER) ?? '{}')).toMatchObject({ session: 'B' }) // ListAgents мод викликав
-  expect(((await $.tool.call(READ)) as Called).context).toEqual([STR.uk.midTurnCommand('запусти тести')])
+  expect(((await $.tool.call(READ)) as Called).context).toEqual([mid('запусти тести')])
 })
 
 test('посеред ходу: дві команди — одним блоком, по черзі', { timeoutMs: 15000 }, async ($, on) => {
@@ -629,7 +671,7 @@ test('посеред ходу: дві команди — одним блоком
   await w.clock.advance(500)
   const r = (await $.tool.call(READ)) as Called
   expect(r.context).toEqual([
-    `${STR.uk.midTurnCommand('запусти тести')}\n\n${STR.uk.midTurnCommand('покажи лог')}`,
+    `${mid('запусти тести')}\n\n${mid('покажи лог')}`,
   ])
 })
 
@@ -664,7 +706,7 @@ for (const filterMode of ['both', 'clean'] as const) {
     w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'ну запусти тести' }]))
     await w.clock.advance(500)
     const heard = filterMode === 'clean' ? '' : `\n${STR.uk.heardSuffix('ну запусти тести')}`
-    expect(((await $.tool.call(READ)) as Called).context).toEqual([`${STR.uk.midTurnCommand('Запусти тести.')}${heard}`])
+    expect(((await $.tool.call(READ)) as Called).context).toEqual([`${mid('Запусти тести.')}${heard}`])
   })
 }
 

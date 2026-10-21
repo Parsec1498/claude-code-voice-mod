@@ -747,7 +747,9 @@ async function deliverMidTurn<R extends { context?: readonly string[] }>($: Engi
   await update($, guarded, () => true)
   const sent = midTurn.splice(0)
   if (!sent.length) return r // паралельний виклик уже забрав
-  const block = sent.map(c => `${t.midTurnCommand(c.text)}${heardOf(t, c.text, c.raw)}`).join('\n\n')
+  const block = sent
+    .map(c => `${VOICE_MARK} ${t.midTurnCommand(c.text)}${heardOf(t, c.text, c.raw)}`)
+    .join('\n\n')
   try {
     for (const c of sent) await note($, t.noteMidTurn(c.text))
     $.ui.toast(t.toastMidTurn)
@@ -1144,7 +1146,9 @@ export const register: Register = on => {
     }
     const r = await guard()
     // Виклик плагіна ($.tool.call) контексту моделі не віддає — лише виклик рушія (моделі).
-    if (r.deny !== undefined || e.agentId !== undefined || next.origin.plugin !== 'engine') return r
+    // Помилка (зокрема Esc посеред інструмента) — хід міг уже скінчитись: черга чекає
+    // наступного кроку або turn.complete, а не йде в перерваний результат.
+    if (r.deny !== undefined || r.isError || e.agentId !== undefined || next.origin.plugin !== 'engine') return r
     if (mainTurn === null || !midTurn.length) return r
     try {
       return await deliverMidTurn($, r)
