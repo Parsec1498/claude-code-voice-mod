@@ -562,8 +562,13 @@ class Speaker:
                 except Exception:  # noqa: BLE001
                     pass
             with self.lock:
+                if stream is not None:
+                    # Звук справді змовк лише тепер: після stop() потік ще дописував шматок
+                    # (~0.2 с) і мав затримку виводу — хвіст глухоти рахуємо від цієї миті,
+                    # для будь-якого покоління (новий блок глухоту лише подовжує).
+                    self.deaf_until = max(self.deaf_until, time.time() + DEAF_TAIL_S)
                 if gen == self.gen:
-                    self.deaf_until = time.time() + DEAF_TAIL_S
+                    self.deaf_until = max(self.deaf_until, time.time() + DEAF_TAIL_S)
                     self.speaking = False
                     self.proc = None
                     if err is not None:

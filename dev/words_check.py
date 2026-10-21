@@ -347,6 +347,7 @@ sys.stdout.buffer.write(b"\x04")
 class FakeStream:
     def __init__(self, rate: int):
         self.rate, self.data, self.closed, self.aborted, self.stopped = rate, b"", False, False, False
+        self.closed_at = 0.0
 
     def write(self, b: bytes) -> None:
         assert len(b) % 2 == 0, len(b)
@@ -359,6 +360,7 @@ class FakeStream:
         self.aborted = True
 
     def close(self) -> None:
+        self.closed_at = time.time()
         self.closed = True
 
 
@@ -432,6 +434,10 @@ with tempfile.TemporaryDirectory() as d:
         assert not sp.busy() and t < sp.deaf_until <= time.time() + 0.31
         assert wait_until(lambda: streams[1].closed, 5)
         assert streams[1].aborted and len(streams[1].data) < 100
+        # Хвіст глухоти — від миті, коли звук справді обірвано (стрім закрито в потоці),
+        # а не від виклику stop(): останній шматок ще міг звучати після нього.
+        assert wait_until(lambda: sp.deaf_until >= streams[1].closed_at + S.DEAF_TAIL_S, 2), (
+            sp.deaf_until, streams[1].closed_at)
         assert sp.take_error() is None
         # Новий блок, поки звучить попередній, — попередній обірвано, новий звучить.
         sp.say("First.", VOICE)
