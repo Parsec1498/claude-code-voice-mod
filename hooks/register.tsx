@@ -260,6 +260,13 @@ let isTicking = false // тік довший за TICK_MS не має накла
 let skipSeq = -1 // подія bus.json, передана сюди зміною чату: її несе handoff, не шина
 let ownerChain: Promise<unknown> = Promise.resolve()
 const approvals = new Map<string, number>() // ключ виклику → коли дозволили
+// Хід головного циклу цієї сесії, що йде зараз; null — сесія вільна або невідомо
+// (мод перезавантажили посеред ходу) — тоді команда йде як завжди, prompt.submit.
+let mainTurn: string | null = null
+// Команди, сказані, поки агент працює: prompt.submit плагіна чекав би кінця ходу, тож
+// вони йдуть контекстом результату наступного інструмента головного циклу, а якщо
+// інструментів уже не буде — prompt.submit на turn.complete.
+const midTurn: { text: string; raw: string | null }[] = []
 // Відповідь, набрана в чаті: хук prompt.submit лише кладе її сюди, а виконує
 // тік — відправка нового промпту зсередини того самого хука губиться.
 let typedAnswer: 'yes' | 'no' | null = null
@@ -718,11 +725,36 @@ async function note($: EngineInterface, text: string): Promise<void> {
   await update($, decisions, list => [...list, text].slice(-6))
 }
 
-/** 🎙 — щоб і людина, і модель бачили: це розпізнана мова, у ній бувають помилки. */
+function heardOf(t: Strings, text: string, raw: string | null): string {
+  return raw && raw.trim() !== text.trim() ? `\n${t.heardSuffix(raw.trim())}` : ''
+}
+
+/** 🎙 — щоб і людина, і модель бачили: це розпізнана мова, у ній бувають помилки.
+ * Агент працює — у чергу посеред ходу (див. `midTurn`). */
 function submitVoice($: EngineInterface, t: Strings, text: string, raw: string | null): void {
-  const heard = raw && raw.trim() !== text.trim() ? `\n${t.heardSuffix(raw.trim())}` : ''
+  if (mainTurn !== null) {
+    midTurn.push({ text, raw })
+    return
+  }
   // Не чекаємо: submit резолвиться лише зі стартом ходу, а тік має йти далі.
-  void $.prompt.submit({ text: `${VOICE_MARK} ${text}${heard}`, asUser: true }).catch(() => {})
+  void $.prompt.submit({ text: `${VOICE_MARK} ${text}${heardOf(t, text, raw)}`, asUser: true }).catch(() => {})
+}
+
+/** Команди з черги посеред ходу — одним блоком у контекст результату інструмента.
+ * Гвард дій — ДО того, як агент їх прочитає: тепер у ході є голосова команда. */
+async function deliverMidTurn<R extends { context?: readonly string[] }>($: EngineInterface, r: R): Promise<R> {
+  const t = await strings($)
+  await update($, guarded, () => true)
+  const sent = midTurn.splice(0)
+  if (!sent.length) return r // паралельний виклик уже забрав
+  const block = sent.map(c => `${t.midTurnCommand(c.text)}${heardOf(t, c.text, c.raw)}`).join('\n\n')
+  try {
+    for (const c of sent) await note($, t.noteMidTurn(c.text))
+    $.ui.toast(t.toastMidTurn)
+  } catch {
+    // примітка й тост — не причина загубити вже забрану з черги команду
+  }
+  return { ...r, context: [...(r.context ?? []), block] }
 }
 
 /** Модель чистить текст і ставить мітку; без моделі — сирий текст і локальна оцінка. */
@@ -1088,24 +1120,37 @@ export const register: Register = on => {
 
   // Гвард дій: від ходу, запущеного голосом, і до наступного повідомлення, набраного
   // людиною — разом із субагентами, фоновими задачами та їхніми сповіщеннями.
+  // Після гварда — команда, сказана посеред ходу: лише виклику головного циклу, який зробила
+  // модель (не субагенту і не власному $.tool.call мода — там контекст ніхто не прочитає).
   on('tool.call', async ($, e, next) => {
     void boot($).catch(() => {})
-    if (!(await read($, guarded))) return next(e)
-    const args = e as unknown as Record<string, unknown>
-    const why = destructiveReason(e.tool, args)
-    if (!why) return next(e)
-    const key = callKey(e.tool, args)
-    const okAt = approvals.get(key)
-    if (okAt !== undefined && (await $.clock.now()) - okAt < APPROVAL_MS) {
-      approvals.delete(key) // дозвіл одноразовий
-      return next(e)
+    const guard = async () => {
+      if (!(await read($, guarded))) return next(e)
+      const args = e as unknown as Record<string, unknown>
+      const why = destructiveReason(e.tool, args)
+      if (!why) return next(e)
+      const key = callKey(e.tool, args)
+      const okAt = approvals.get(key)
+      if (okAt !== undefined && (await $.clock.now()) - okAt < APPROVAL_MS) {
+        approvals.delete(key) // дозвіл одноразовий
+        return next(e)
+      }
+      const text = describeCall(e.tool, args)
+      const at = await $.clock.now()
+      await update($, pending, () => ({ kind: 'action' as const, text, raw: null, reason: why, at, key }))
+      const t = await strings($)
+      $.ui.toast(t.toastBlocked(reasonText(t, why)))
+      return { deny: t.denyBlocked(reasonText(t, why)) }
     }
-    const text = describeCall(e.tool, args)
-    const at = await $.clock.now()
-    await update($, pending, () => ({ kind: 'action' as const, text, raw: null, reason: why, at, key }))
-    const t = await strings($)
-    $.ui.toast(t.toastBlocked(reasonText(t, why)))
-    return { deny: t.denyBlocked(reasonText(t, why)) }
+    const r = await guard()
+    // Виклик плагіна ($.tool.call) контексту моделі не віддає — лише виклик рушія (моделі).
+    if (r.deny !== undefined || e.agentId !== undefined || next.origin.plugin !== 'engine') return r
+    if (mainTurn === null || !midTurn.length) return r
+    try {
+      return await deliverMidTurn($, r)
+    } catch {
+      return r // черга лишилась — піде на наступному кроці чи після ходу
+    }
   }).catch(async ($, e, next) => {
     if (next.called) return next(e)
     // Шар безпеки: збій читання рядків не має перетворитись на пропуск виклику.
@@ -1130,6 +1175,14 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // Кінець ходу головного циклу (і перерваного теж): чого не встигли доставити
+    // посеред ходу — відправити як звичайно, по черзі. Кінець ходу субагента — не кінець.
+    if (!e.agentId && e.turnId === mainTurn) {
+      // Рядки — ще до зняття ходу: сказане тим часом стає в ту саму чергу, порядок не ламається.
+      const t = midTurn.length ? await strings($).catch(() => STR.uk) : STR.uk
+      mainTurn = null
+      for (const c of midTurn.splice(0)) submitVoice($, t, c.text, c.raw)
+    }
     const done = await next(e)
     const gen = await read($, glossaryGen)
     // Свій агент — за id; рушій, що id не повернув, — за формою відповіді генератора.
@@ -1142,6 +1195,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     if (!e.agentId) {
+      mainTurn = e.turnId
       if (e.text.trimStart().startsWith(VOICE_MARK)) await update($, guarded, () => true)
       else if (isHumanNext) await update($, guarded, () => false)
       isHumanNext = false

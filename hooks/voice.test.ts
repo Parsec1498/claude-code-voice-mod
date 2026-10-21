@@ -462,6 +462,8 @@ test('гвард: rm у голосовому ході — лише після «
   const first = (await $.tool.call(rm)) as { deny?: string }
   expect(first.deny).toMatch(/зупинено до підтвердження/)
   expect(w.ran).toEqual([])
+  // Агент зупинився чекати підтвердження — хід скінчився (посеред ходу «так» пішло б контекстом).
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ text: /Підтвердіть дію: Bash: rm -rf tmp/ })).toBeDefined()
@@ -497,6 +499,7 @@ test('картка: кнопка «Так» підтверджує лише ту
   // Поки людина тягнеться до кнопки, нова дія підміняє картку.
   await w.clock.advance(100)
   await $.tool.call({ tool: 'Bash', command: 'rm -rf D:/Dev', description: 'x' } as never)
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
   await ui.press({ key: 'yes' }) // натиск по старому малюнку картки
   await ui.unmount()
   expect(w.submitted.some(x => x.includes('rm -rf'))).toBe(false)
@@ -530,6 +533,138 @@ for (const filterMode of ['off', 'clean'] as const) {
     const ui = await $.ui.mount(BAND)
     expect(await ui.find({ key: 'yes' })).toBeDefined() // картка очікує підтвердження
     await ui.unmount()
+  })
+}
+
+// Команда посеред ходу: не чекає кінця роботи агента, а йде з результатом його
+// наступного виклику інструмента — як повідомлення, набране в чаті під час ходу.
+type Called = { deny?: string; context?: readonly string[] }
+const READ = { tool: 'Read', file_path: 'D:\\Dev\\a.txt' } as never
+const done = (turnId: string, agentId?: string) =>
+  ({ turnId, agentId, reason: 'answer' as const, answer: '', durationMs: 1, isAborted: false })
+
+test('посеред ходу: команда йде з результатом наступного інструмента, не після ходу', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'запусти тести' }]))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual([]) // агент працює — у чергу, а не prompt.submit
+
+  const r = (await $.tool.call(READ)) as Called
+  expect(r.context).toEqual([STR.uk.midTurnCommand('запусти тести')])
+  expect(r.context?.[0]).toMatch(/Голосова команда людини.*«запусти тести»/)
+  expect(w.toasts).toContain(STR.uk.toastMidTurn)
+  const pane = await $.ui.mount(PANE)
+  expect(await pane.find({ text: /відправлено під час роботи агента: запусти тести/ })).toBeDefined()
+  await pane.unmount()
+  // Доставлено один раз: наступний виклик — без неї, і після ходу — теж.
+  expect(((await $.tool.call(READ)) as Called).context).toBeUndefined()
+  await $.turn.complete(done('t1'))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual([])
+  // Ходу нема — знову одразу prompt.submit.
+  w.fs.set(BUS, bus(T0 + 1500, 3, [{ seq: 3, kind: 'command', text: 'покажи лог' }]))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual(['🎙 покажи лог'])
+})
+
+test('посеред ходу: інструментів більше не було — команда йде після ходу, не губиться', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  w.fs.set(BUS, bus(T0 + 500, 3, [
+    { seq: 2, kind: 'command', text: 'запусти тести' },
+    { seq: 3, kind: 'command', text: 'покажи лог' },
+  ]))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual([])
+  await $.turn.complete({ ...done('t1'), reason: 'aborted', isAborted: true }) // і перерваний хід
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual(['🎙 запусти тести', '🎙 покажи лог'])
+})
+
+test('посеред ходу: субагенту команду не підсовуємо — лише головному циклу', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  await $.turn.start({ text: 'знайди виклики', turnId: 's1', agentId: 'sub1' }) // хід субагента — не хід сесії
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'запусти тести' }]))
+  await w.clock.advance(500)
+  const sub = (await $.tool.call({ ...(READ as object), agentId: 'sub1' } as never)) as Called
+  expect(sub.context).toBeUndefined()
+  await $.turn.complete(done('s1', 'sub1')) // кінець ходу субагента хід сесії не закінчує
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual([])
+  const main = (await $.tool.call(READ)) as Called
+  expect(main.context).toEqual([STR.uk.midTurnCommand('запусти тести')])
+})
+
+test('посеред ходу: власний виклик мода (ListAgents зміни чату) чергу не забирає', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [ALIVE_B]: JSON.stringify({ at: T0, ref: 'b48a00' }) })
+  w.agents.listing = LIST_A
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'запусти тести' }]))
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 1000, 3, [{ seq: 3, kind: 'command', text: 'Зміна чату, запуск бота. Перезапусти сервер.' }]))
+  await w.clock.advance(500)
+  expect(JSON.parse(w.fs.get(OWNER) ?? '{}')).toMatchObject({ session: 'B' }) // ListAgents мод викликав
+  expect(((await $.tool.call(READ)) as Called).context).toEqual([STR.uk.midTurnCommand('запусти тести')])
+})
+
+test('посеред ходу: дві команди — одним блоком, по черзі', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  w.fs.set(BUS, bus(T0 + 500, 3, [
+    { seq: 2, kind: 'command', text: 'запусти тести' },
+    { seq: 3, kind: 'command', text: 'покажи лог' },
+  ]))
+  await w.clock.advance(500)
+  const r = (await $.tool.call(READ)) as Called
+  expect(r.context).toEqual([
+    `${STR.uk.midTurnCommand('запусти тести')}\n\n${STR.uk.midTurnCommand('покажи лог')}`,
+  ])
+})
+
+test('посеред ручного ходу: доставлена голосова команда вмикає гвард дій', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.prompt.submit({ text: 'зроби рефакторинг', origin: { kind: 'composer' }, wait: false } as never)
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  const rm = { tool: 'Bash', command: 'rm -rf x', description: 'x' } as never
+  expect(((await $.tool.call(rm)) as Called).deny).toBeUndefined() // ручний хід — без гварда
+
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'прибери теку x' }]))
+  await w.clock.advance(500)
+  expect(((await $.tool.call(READ)) as Called).context).toHaveLength(1)
+  const after = (await $.tool.call(rm)) as Called
+  expect(after.deny).toMatch(/зупинено до підтвердження/)
+  expect(w.ran).toEqual(['rm -rf x', 'undefined']) // другий rm не виконано
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ key: 'yes' })).toBeDefined()
+  await ui.unmount()
+})
+
+for (const filterMode of ['both', 'clean'] as const) {
+  test(`посеред ходу: «(розпізнано: …)» за режимом filterMode=${filterMode}`, { timeoutMs: 15000 }, async ($, on) => {
+    const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: JSON.stringify({ filterMode }) }, {
+      'ну запусти тести': { clean: 'Запусти тести.', risk: 'safe' },
+    })
+    await $.session.start(START)
+    await w.clock.advance(500)
+    await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+    w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'ну запусти тести' }]))
+    await w.clock.advance(500)
+    const heard = filterMode === 'clean' ? '' : `\n${STR.uk.heardSuffix('ну запусти тести')}`
+    expect(((await $.tool.call(READ)) as Called).context).toEqual([`${STR.uk.midTurnCommand('Запусти тести.')}${heard}`])
   })
 }
 

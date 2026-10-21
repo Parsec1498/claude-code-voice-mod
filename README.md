@@ -14,6 +14,9 @@ sent to the chat as your prompt, marked 🎙. Speech is recognized **locally** b
   discarded, nothing goes to the chat. Works in both modes, also on its own after a dictation
   («… Done» sends, «Cancel» drops everything collected). Saying «Claude, cancel» also answers
   «no» to a pending confirmation card.
+- **While the agent works**: a command spoken mid-turn reaches the agent at its next step,
+  like a message typed into the chat during a turn; if the turn has no steps left, it is sent
+  right after the turn ends. The destructive-action guard turns on, as for a voice-started turn.
 - **Safety**: an optional Claude model cleans the text and flags risky commands; destructive
   actions in a voice-started turn (deletions, irreversible git, sending data out, changes to
   settings or autostart, background and scheduled tasks) stop until you confirm with a button

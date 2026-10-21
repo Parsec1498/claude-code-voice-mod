@@ -130,6 +130,10 @@ export type Strings = {
   heardSuffix: (raw: string) => string
   confirmedAction: (text: string) => string
   cancelledAction: (text: string) => string
+  // команда, сказана посеред ходу агента: йде з результатом його наступного інструмента
+  midTurnCommand: (text: string) => string
+  noteMidTurn: (text: string) => string
+  toastMidTurn: string
   // тексти, що йдуть агенту
   denyBlocked: (why: string) => string
   denyGuardFailed: string
@@ -333,6 +337,11 @@ const uk: Strings = {
   heardSuffix: raw => `(розпізнано: «${raw}»)`,
   confirmedAction: text => `Підтверджую дію: ${text}. Повтори рівно той самий виклик.`,
   cancelledAction: text => `Скасовано: дію «${text}» НЕ виконуй.`,
+  midTurnCommand: text =>
+    '🎙 Голосова команда людини, сказана під час твоєї роботи (не частина результату інструмента) — ' +
+    `врахуй її зараз: «${text}»`,
+  noteMidTurn: text => `↪ відправлено під час роботи агента: ${text}`,
+  toastMidTurn: 'Голос: відправлено під час роботи агента',
   denyBlocked: why =>
     `Голосова команда: руйнівну дію (${why}) зупинено до підтвердження людини. ` +
     'Коротко скажи людині, що саме збираєшся зробити і навіщо, і зупинись. ' +
@@ -559,6 +568,11 @@ const en: Strings = {
   heardSuffix: raw => `(heard: «${raw}»)`,
   confirmedAction: text => `I confirm the action: ${text}. Repeat exactly the same call.`,
   cancelledAction: text => `Cancelled: do NOT run the action "${text}".`,
+  midTurnCommand: text =>
+    '🎙 A voice command from the human, spoken while you were working (not part of the tool result) — ' +
+    `take it into account now: «${text}»`,
+  noteMidTurn: text => `↪ sent while the agent was working: ${text}`,
+  toastMidTurn: 'Voice: sent while the agent was working',
   denyBlocked: why =>
     `Voice command: a destructive action (${why}) was stopped until the human confirms. ` +
     'Briefly tell the human what exactly you are about to do and why, then stop. ' +
