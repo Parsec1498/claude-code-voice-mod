@@ -46,7 +46,7 @@ function tailText($f) {
 }
 function runPress($file, $control, $after) {
   [IO.File]::WriteAllText("$h\control.json", $control)
-  Remove-Item "$hus.json", "$h\press.out" -ErrorAction SilentlyContinue
+  Remove-Item "$h\bus.json", "$h\press.out" -ErrorAction SilentlyContinue
   $p = Start-Process -FilePath $py -ArgumentList @('-u', "`"$script`"", '--home', "`"$h`"", '--file', "`"$h\$file.wav`"", '--no-beep') `
     -RedirectStandardOutput "$h\press.out" -RedirectStandardError "$h\press.err" -PassThru -WindowStyle Hidden
   while (-not $p.HasExited) {
