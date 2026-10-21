@@ -1,6 +1,8 @@
 // Озвучення відповідей: чисті функції блоку «🔊 Озвучити:» — пошук у відповіді агента,
 // чистка під синтез мовлення, мова блоку й текст інструкції агенту. Без `$` — тестується окремо.
 
+import type { VoiceSettings } from '../types'
+
 export type SpeakLang = 'uk' | 'en'
 
 // Маркер на початку рядка: необов'язкові `*`/`_`, необов'язковий 🔊, слово, двокрапка
@@ -90,4 +92,56 @@ export function speakSection(lang: SpeakLang): string {
     '- Простий текст: без markdown, коду, шляхів, URL, ідентифікаторів, емодзі (крім маркера). Числа, одиниці й скорочення пиши словами так, як їх вимовляють.',
     '- Мова блоку — та, якою людина говорить у цьому чаті (типово українська). Блок одномовний: англійські терміни в українському блоці пиши українськими словами чи транслітом, бо український голос латиницю читає погано; якщо терміна не передати, пропусти його.',
   ].join('\n')
+}
+
+// Каталог голосів Piper (rhasspy/piper-voices): лише ті, чия ліцензія датасету вільна. Ніколи:
+// lessac, ryan, hfc_*, l2arctic, semaine і всі «See URL». Якість у назві — та, що є на HF
+// (для англійських — medium, а де її нема, єдина наявна); `mb` — розмір .onnx (content-length
+// з HF, округлено), перевірено вручну 2026-10-22.
+export type VoiceInfo = { name: string; lang: SpeakLang; license: string; mb: number }
+
+export const VOICES: readonly VoiceInfo[] = [
+  { name: 'uk_UA-lada-x_low', lang: 'uk', license: 'Apache-2.0', mb: 21 },
+  { name: 'uk_UA-mykyta-high', lang: 'uk', license: 'Apache-2.0', mb: 114 },
+  { name: 'uk_UA-oleksa-high', lang: 'uk', license: 'Apache-2.0', mb: 114 },
+  { name: 'uk_UA-tetiana-high', lang: 'uk', license: 'Apache-2.0', mb: 114 },
+  { name: 'uk_UA-ukrainian_tts-medium', lang: 'uk', license: 'CC0', mb: 77 },
+  { name: 'en_US-joe-medium', lang: 'en', license: 'CC0', mb: 63 },
+  { name: 'en_US-mike-medium', lang: 'en', license: 'CC0', mb: 63 },
+  { name: 'en_US-kathleen-low', lang: 'en', license: 'CC0', mb: 63 },
+  { name: 'en_US-reza_ibrahim-medium', lang: 'en', license: 'CC0', mb: 64 },
+  { name: 'en_US-john-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-kristin-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-bryce-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-norman-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-ljspeech-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-sam-medium', lang: 'en', license: 'Apache-2.0', mb: 63 },
+  { name: 'en_US-libritts_r-medium', lang: 'en', license: 'CC BY 4.0', mb: 79 },
+  { name: 'en_GB-cori-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_GB-alba-medium', lang: 'en', license: 'CC BY 4.0', mb: 63 },
+  { name: 'en_GB-aru-medium', lang: 'en', license: 'CC BY 4.0', mb: 77 },
+  { name: 'en_GB-vctk-medium', lang: 'en', license: 'CC BY 4.0', mb: 77 },
+]
+
+// Тимчасові типові; остаточні — після прослуховування.
+export const DEFAULT_VOICE: Record<SpeakLang, string> = {
+  uk: 'uk_UA-ukrainian_tts-medium',
+  en: 'en_US-joe-medium',
+}
+
+/** Вибраний у ⚙ голос мови або типовий (порожнє поле = типовий). */
+export function voiceOf(set: VoiceSettings, lang: SpeakLang): string {
+  const chosen = lang === 'uk' ? set.speakVoiceUk : set.speakVoiceEn
+  return chosen !== '' ? chosen : DEFAULT_VOICE[lang]
+}
+
+/** Список голосів мови для вибору: `назва · ліцензія`, ` ⬇ N МБ` — якщо ще не на диску. */
+export function voiceOptions(
+  lang: SpeakLang,
+  installed: ReadonlySet<string>,
+): { value: string; label: string }[] {
+  return VOICES.filter(v => v.lang === lang).map(v => ({
+    value: v.name,
+    label: `${v.name} · ${v.license}${installed.has(v.name) ? '' : ` ⬇ ${v.mb} МБ`}`,
+  }))
 }

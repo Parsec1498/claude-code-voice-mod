@@ -54,6 +54,7 @@ export type Strings = {
   stateReady: string
   stateArmed: string
   stateTranscribing: string
+  stateSpeaking: string
   stateMuted: string
   stateError: string
   // рядок стану в застосунку й повідомлення мода про слухача
@@ -265,6 +266,7 @@ const uk: Strings = {
   stateReady: 'Слухаю',
   stateArmed: 'Слухаю команду',
   stateTranscribing: 'Розпізнаю',
+  stateSpeaking: 'Озвучую',
   stateMuted: 'Mic off',
   stateError: 'Помилка',
   statusLine: state => `Голос: ${state}`,
@@ -497,6 +499,7 @@ const en: Strings = {
   stateReady: 'Listening',
   stateArmed: 'Listening for a command',
   stateTranscribing: 'Transcribing',
+  stateSpeaking: 'Speaking',
   stateMuted: 'Mic off',
   stateError: 'Error',
   statusLine: state => `Voice: ${state}`,

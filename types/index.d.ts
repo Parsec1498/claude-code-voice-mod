@@ -5,6 +5,7 @@ export type VoiceState =
   | 'ready'
   | 'armed'
   | 'transcribing'
+  | 'speaking'
   | 'muted'
   | 'error'
 
@@ -13,7 +14,7 @@ export type VoiceStatus = { state: VoiceState; msg: string | null }
 /** Рядок журналу панелі (подія з bus.json). */
 export type VoiceEntry = {
   seq: number
-  kind: 'command' | 'ignored' | 'part' | 'cancelled' | 'info' | 'error'
+  kind: 'command' | 'ignored' | 'part' | 'spoke' | 'cancelled' | 'info' | 'error'
   text: string
   ms: number | null
 }
@@ -70,6 +71,11 @@ export type VoiceSettings = {
   chat: string
   /** Агенти в голосовому режимі самі додають правила в словник (інструмент add_term). */
   autoTerms: boolean
+  /** Озвучувати відповіді агента (блок «🔊 Озвучити:») локальним голосом Piper. */
+  speak: boolean
+  /** Голос Piper для української/англійської; порожньо = типовий (speak.DEFAULT_VOICE). */
+  speakVoiceUk: string
+  speakVoiceEn: string
 }
 
 declare module 'claude-code' {
@@ -109,6 +115,10 @@ declare module 'claude-code' {
       models: string[]
       /** Пристрій розпізнавання слухача: від нього залежать типові моделі й пам'ять у списках. */
       device: 'cuda' | 'cpu'
+      /** Модуль озвучення (Piper): нема / ставиться / готовий / збій (звітує слухач у bus.json). */
+      tts: 'absent' | 'installing' | 'ready' | 'error'
+      /** Голоси Piper, що вже на диску. */
+      voices: string[]
     }
   }
 }

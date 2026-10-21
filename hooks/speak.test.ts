@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cleanForSpeech, findSpeakBlock, speakLang, speakSection } from './speak'
+import { DEFAULT_VOICE, VOICES, cleanForSpeech, findSpeakBlock, speakLang, speakSection, voiceOf, voiceOptions } from './speak'
+import type { VoiceSettings } from '../types'
 
 test('блок — останній рядок з маркером, до кінця відповіді', () => {
   expect(findSpeakBlock('Звіт.\n\n🔊 Озвучити: Готово, тести зелені.')).toBe('Готово, тести зелені.')
@@ -44,4 +45,26 @@ test('мова блоку за алфавітом', () => {
 test('інструкція містить маркер своєї мови', () => {
   expect(speakSection('uk')).toContain('🔊 Озвучити:')
   expect(speakSection('en')).toContain('🔊 Speak:')
+})
+
+test('каталог: лише вільні ліцензії, обидві мови, типові в каталозі', () => {
+  expect(VOICES.some(v => /lessac|ryan|hfc_|l2arctic|semaine/.test(v.name))).toBe(false)
+  expect(VOICES.filter(v => v.lang === 'uk').length).toBe(5)
+  expect(VOICES.find(v => v.name === DEFAULT_VOICE.uk)?.lang).toBe('uk')
+  expect(VOICES.find(v => v.name === DEFAULT_VOICE.en)?.lang).toBe('en')
+  expect(new Set(VOICES.map(v => v.name)).size).toBe(VOICES.length)
+  expect(VOICES.every(v => v.mb > 0 && v.license !== '')).toBe(true)
+})
+
+test('варіанти голосів: ⬇ лише в неустановлених', () => {
+  const opts = voiceOptions('uk', new Set([DEFAULT_VOICE.uk]))
+  expect(opts.find(o => o.value === DEFAULT_VOICE.uk)?.label).not.toContain('⬇')
+  expect(opts.filter(o => o.label.includes('⬇')).length).toBe(4)
+  expect(opts.every(o => VOICES.find(v => v.name === o.value)?.lang === 'uk')).toBe(true)
+})
+
+test('голос: вибраний або типовий для мови', () => {
+  const set = { speakVoiceUk: '', speakVoiceEn: 'en_GB-cori-medium' } as VoiceSettings
+  expect(voiceOf(set, 'uk')).toBe(DEFAULT_VOICE.uk)
+  expect(voiceOf(set, 'en')).toBe('en_GB-cori-medium')
 })

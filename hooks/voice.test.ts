@@ -3,7 +3,7 @@ import type { Mounted } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { DEFAULT_WORDS, STR, langOf } from './i18n'
-import { settingsOf } from './register'
+import { parseBus, settingsOf, toEntries } from './register'
 
 const HOME = 'C:\\Users\\T\\.claude\\voice-mod'
 const BUS = `${HOME}\\bus.json`
@@ -1089,6 +1089,9 @@ const DEFAULT_SETTINGS = {
   model: '',
   chat: '',
   autoTerms: true,
+  speak: false,
+  speakVoiceUk: '',
+  speakVoiceEn: '',
 }
 
 test('settingsOf: типові значення і відкидання битих', () => {
@@ -1535,4 +1538,25 @@ test('кнопка ✖: натиск пише control.json.cancelAt (час), р
   const { cancelAt: _at, ...rest } = after
   expect(rest).toEqual(before) // злиттям, як restart
   expect(w.submitted).toEqual([]) // у чат нічого не йде
+})
+
+test('settingsOf: озвучення типово вимкнене, голоси порожні', () => {
+  expect(settingsOf({})).toMatchObject({ speak: false, speakVoiceUk: '', speakVoiceEn: '' })
+  const s = settingsOf({ speak: true, speakVoiceUk: ' uk_UA-lada-x_low ' })
+  expect(s.speak).toBe(true)
+  expect(s.speakVoiceUk).toBe('uk_UA-lada-x_low')
+})
+
+test('parseBus: tts і voices; нема поля (старий слухач) → null', () => {
+  const base = { at: 1, seq: 1, state: 'ready', events: [] }
+  expect(parseBus(JSON.stringify(base))).toMatchObject({ tts: null, voices: null })
+  const b = parseBus(JSON.stringify({ ...base, tts: 'ready', voices: ['uk_UA-lada-x_low', 5] }))
+  expect(b?.tts).toBe('ready')
+  expect(b?.voices).toEqual(['uk_UA-lada-x_low'])
+  expect(parseBus(JSON.stringify({ ...base, tts: 'bogus' }))?.tts).toBeNull()
+})
+
+test('toEntries: подія spoke потрапляє в журнал', () => {
+  const out = toEntries([{ seq: 3, kind: 'spoke', text: 'Готово.' }])
+  expect(out).toEqual([{ seq: 3, kind: 'spoke', text: 'Готово.', ms: null }])
 })

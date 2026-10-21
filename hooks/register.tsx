@@ -118,6 +118,9 @@ const SETTINGS_DEFAULT: VoiceSettings = {
   model: '',
   chat: '',
   autoTerms: true,
+  speak: false,
+  speakVoiceUk: '',
+  speakVoiceEn: '',
 }
 const settings = atom({ plugin: 'voice-mod', key: 'settings' } as const, SETTINGS_DEFAULT)
 // Текст особистого словника, як він на диску, — для редактора у ⚙ (читає тік, поки ⚙ відкрите).
@@ -131,6 +134,9 @@ const hint = atom({ plugin: 'voice-mod', key: 'hint' } as const, null)
 // Що слухач звітує в bus.json: моделі на диску й пристрій (від нього типові моделі).
 const models = atom({ plugin: 'voice-mod', key: 'models' } as const, [])
 const device = atom({ plugin: 'voice-mod', key: 'device' } as const, 'cuda')
+// Модуль озвучення (Piper) і голоси на диску — звітує слухач у bus.json, як models.
+const tts = atom({ plugin: 'voice-mod', key: 'tts' } as const, 'absent')
+const voices = atom({ plugin: 'voice-mod', key: 'voices' } as const, [])
 
 // Короткі підписи для рядка панелі: він один, поруч іще останнє почуте й кнопки.
 const shortOf = (t: Strings, state: VoiceState): string =>
@@ -140,6 +146,7 @@ const shortOf = (t: Strings, state: VoiceState): string =>
     ready: t.stateReady,
     armed: t.stateArmed,
     transcribing: t.stateTranscribing,
+    speaking: t.stateSpeaking,
     muted: t.stateMuted,
     error: t.stateError,
   })[state]
@@ -151,6 +158,7 @@ const DOT: Record<VoiceState, string> = {
   ready: 'success',
   armed: 'claude',
   transcribing: 'suggestion',
+  speaking: 'suggestion',
   muted: 'inactive',
   error: 'error',
 }
@@ -161,12 +169,13 @@ const ICON: Record<VoiceState, string> = {
   ready: '🟢',
   armed: '🟡',
   transcribing: '🔵',
+  speaking: '🔊',
   muted: '🔇',
   error: '🔴',
 }
 
-const KINDS = new Set(['command', 'ignored', 'part', 'cancelled', 'info', 'error'])
-const STATES = new Set<string>(['off', 'loading', 'ready', 'armed', 'transcribing', 'muted', 'error'])
+const KINDS = new Set(['command', 'ignored', 'part', 'spoke', 'cancelled', 'info', 'error'])
+const STATES = new Set<string>(['off', 'loading', 'ready', 'armed', 'transcribing', 'speaking', 'muted', 'error'])
 
 type Paths = {
   python: string
@@ -178,6 +187,8 @@ type Paths = {
   glossary: string
 }
 
+const TTS_STATES = new Set<string>(['absent', 'installing', 'ready', 'error'])
+
 type BusEvent = { seq: number; kind: string; text?: string | null; ms?: number | null }
 export type Bus = {
   at: number
@@ -187,6 +198,8 @@ export type Bus = {
   events: BusEvent[]
   models: string[] | null // нема поля (старий слухач) → null
   device: 'cuda' | 'cpu' | null
+  tts: 'absent' | 'installing' | 'ready' | 'error' | null // нема поля → null
+  voices: string[] | null
 }
 // handoff — команда, передана зміною чату новому власнику; seq — подія bus.json,
 // з якої її взято (новий власник цю подію сам не обробляє).
@@ -210,6 +223,8 @@ export function parseBus(text: string): Bus | null {
       events: v.events,
       models: Array.isArray(v.models) ? v.models.filter((m): m is string => typeof m === 'string') : null,
       device: v.device === 'cuda' || v.device === 'cpu' ? v.device : null,
+      tts: TTS_STATES.has(String(v.tts)) ? (v.tts as Bus['tts']) : null,
+      voices: Array.isArray(v.voices) ? v.voices.filter((m): m is string => typeof m === 'string') : null,
     }
   } catch {
     return null
@@ -508,7 +523,7 @@ async function switchChat($: EngineInterface, t: Strings, rest: string, seq: num
   await note($, t.noteChatSwitched(chat.title, text)) // саме перемикання сповістить тік
 }
 
-type Control = { muted?: boolean; safeMode?: boolean; restart?: number; cancelAt?: number } & Partial<VoiceSettings>
+type Control = { muted?: boolean; safeMode?: boolean; restart?: number; cancelAt?: number; ttsInstall?: number; ttsRemove?: number } & Partial<VoiceSettings>
 
 /** control.json → налаштування; невідоме чи бите значення — дефолт. */
 export function settingsOf(c: Control): VoiceSettings {
@@ -530,6 +545,9 @@ export function settingsOf(c: Control): VoiceSettings {
     model: typeof c.model === 'string' ? c.model.trim() : '',
     chat: typeof c.chat === 'string' ? c.chat.trim() : '',
     autoTerms: c.autoTerms !== false,
+    speak: c.speak === true,
+    speakVoiceUk: typeof c.speakVoiceUk === 'string' ? c.speakVoiceUk.trim() : '',
+    speakVoiceEn: typeof c.speakVoiceEn === 'string' ? c.speakVoiceEn.trim() : '',
   }
 }
 
@@ -633,6 +651,14 @@ async function tick($: EngineInterface): Promise<void> {
   if (bus?.device && (await read($, device)) !== bus.device) {
     const dev = bus.device
     await update($, device, () => dev)
+  }
+  if (bus?.tts && (await read($, tts)) !== bus.tts) {
+    const st = bus.tts
+    await update($, tts, () => st)
+  }
+  if (bus?.voices && JSON.stringify(await read($, voices)) !== JSON.stringify(bus.voices)) {
+    const list = bus.voices
+    await update($, voices, () => list)
   }
   const open = await read($, hint)
   if (open && now - open.at >= HINT_MS) await update($, hint, () => null)
