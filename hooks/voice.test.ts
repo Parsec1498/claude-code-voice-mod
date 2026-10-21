@@ -4,6 +4,7 @@ import type { On } from 'claude-code'
 
 import { DEFAULT_WORDS, STR, langOf } from './i18n'
 import { parseBus, settingsOf, toEntries } from './register'
+import { DEFAULT_VOICE } from './speak'
 
 const HOME = 'C:\\Users\\T\\.claude\\voice-mod'
 const BUS = `${HOME}\\bus.json`
@@ -1588,4 +1589,127 @@ test('prompt.compose: озвучення ввімкнене — остання �
   const en = (await $.prompt.compose(COMPOSE_INPUT)).sections
   expect(en[en.length - 1]?.text).toContain('🔊 Speak:')
   expect((await $.prompt.compose(COMPOSE_INPUT)).sections).toEqual(en) // двічі поспіль — той самий текст (кеш)
+})
+
+// ── speak.json: запит озвучки й зупинка ─────────────────────────────────────────────
+const SPEAK = `${HOME}\\speak.json`
+const speakOf = (w: { fs: Map<string, string> }) => {
+  const raw = w.fs.get(SPEAK)
+  return raw === undefined ? undefined : (JSON.parse(raw) as Record<string, unknown>)
+}
+const answered = (answer: string, extra: Record<string, unknown> = {}) =>
+  ({ turnId: 't1', reason: 'answer' as const, answer, durationMs: 1, isAborted: false, ...extra }) as never
+
+async function speakWorld(on: On, $: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], control: Record<string, unknown>, owner = 'A') {
+  const w = world(on, 'A', {
+    [BUS]: bus(T0, 1, []),
+    [CONTROL]: JSON.stringify(control),
+    ...(owner === 'A' ? {} : { [OWNER]: JSON.stringify({ session: owner, at: T0 }) }),
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.delete(SPEAK) // перший claim міг записати stop — рахуємо лише те, що далі
+  return w
+}
+
+test('speak: власник, головний цикл, блок у відповіді → speak.json з текстом, мовою і голосом', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: true })
+  await $.turn.complete(answered('Звіт\n🔊 Озвучити: Готово.'))
+  const req = speakOf(w)
+  expect(req).toMatchObject({ text: 'Готово.', lang: 'uk', voice: DEFAULT_VOICE.uk, session: 'A' })
+  expect(req?.seq).toBe(req?.at)
+  expect(typeof req?.at).toBe('number')
+  expect(w.fs.get(SPEAK)?.charCodeAt(0)).toBe(123) // `{`, без BOM
+})
+
+test('speak: англійський блок при language=uk → lang en і англійський голос; свій голос з ⚙', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: true, language: 'uk' })
+  await $.turn.complete(answered('Report\n🔊 Speak: All done.'))
+  expect(speakOf(w)).toMatchObject({ text: 'All done.', lang: 'en', voice: DEFAULT_VOICE.en })
+  w.fs.set(CONTROL, JSON.stringify({ speak: true, speakVoiceEn: 'en_US-mike-medium' }))
+  await w.clock.advance(1500)
+  await $.turn.complete(answered('x\n🔊 Speak: Again.'))
+  expect(speakOf(w)).toMatchObject({ text: 'Again.', voice: 'en_US-mike-medium' })
+})
+
+const BLOCK = 'Звіт\n🔊 Озвучити: Готово.'
+
+test('speak: чат не власник голосу → speak.json нема', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: true }, 'B')
+  await $.turn.complete(answered(BLOCK))
+  expect(speakOf(w)).toBeUndefined()
+})
+
+test('speak: озвучення вимкнене → speak.json нема', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: false })
+  await $.turn.complete(answered(BLOCK))
+  expect(speakOf(w)).toBeUndefined()
+})
+
+test('speak: субагент / перервано / нема маркера → speak.json нема', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: true })
+  await $.turn.complete(answered(BLOCK, { agentId: 'sub1' }))
+  await $.turn.complete(answered(BLOCK, { reason: 'aborted', isAborted: true }))
+  await $.turn.complete(answered('Просто відповідь без блоку.'))
+  expect(speakOf(w)).toBeUndefined()
+})
+
+test('speak: відповідь генератора словника озвучки не дає', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: true, hotwords: 'Login' })
+  const band = await $.ui.mount(BAND)
+  await band.press({ key: 'settings' })
+  await band.unmount()
+  const ui = await settingsUi(x => $.ui.mount(x))
+  await ui.press({ key: 'glossaryGenerate' })
+  await ui.unmount()
+  expect(w.spawnedAgents).toHaveLength(1)
+  const reply = '{"hotwords": ["MyApp"], "rules": [{"heard": ["май ап"], "write": "MyApp"}]}\n🔊 Озвучити: Готово.'
+  await $.turn.complete(answered(reply, { turnId: 'a1', agentId: 'g1' }))
+  await $.turn.complete(answered(reply, { turnId: 'a2' })) // рушій, що id не віддав: впізнаємо за формою
+  expect(speakOf(w)).toBeUndefined()
+})
+
+test('speak: людина набрала текст у чаті-власнику → stop; голосова команда і черга midTurn — ні', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await speakWorld(on, $, { speak: true })
+  await $.prompt.submit({ text: '🎙 ручна голосова', origin: { kind: 'composer' }, wait: false } as never)
+  await w.clock.advance(500)
+  expect(speakOf(w)).toBeUndefined()
+
+  // Команда, сказана посеред ходу, іде на turn.complete через prompt.submit мода — це не людина.
+  await $.turn.start({ text: 'зроби рефакторинг', turnId: 't1' })
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'запусти тести' }]))
+  await w.clock.advance(500)
+  await $.turn.complete(answered(''))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual(['🎙 ручна голосова', '🎙 запусти тести'])
+  expect(speakOf(w)).toBeUndefined()
+
+  await $.prompt.submit({ text: 'стоп, не так', origin: { kind: 'composer' }, wait: false } as never)
+  await w.clock.advance(500)
+  const stop = speakOf(w)
+  expect(stop).toMatchObject({ stop: true, session: 'A' })
+  expect(stop?.seq).toBe(stop?.at)
+  expect(stop).not.toHaveProperty('text')
+})
+
+test('speak: голос перейшов у цю сесію (claim) → stop; уже власник — ні', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'B', {
+    [BUS]: bus(T0, 5, []),
+    [OWNER]: JSON.stringify({ session: 'A', at: T0 }),
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(OWNER, JSON.stringify({ session: 'A', at: T0 + 500 }))
+  await w.clock.advance(500)
+  expect(speakOf(w)).toBeUndefined() // чужий власник живий — нічого не змінилось
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'here' })
+  await ui.unmount()
+  expect(JSON.parse(w.fs.get(OWNER) ?? '{}').session).toBe('B')
+  expect(speakOf(w)).toMatchObject({ stop: true, session: 'B' })
+
+  w.fs.delete(SPEAK)
+  await $.command.run({ command: 'voice-here' } as never) // вже тут — перенесення нема
+  expect(speakOf(w)).toBeUndefined()
 })

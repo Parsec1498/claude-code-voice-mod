@@ -19,7 +19,8 @@ import { DEFAULT_WORDS, STR, langOf, reasonText } from './i18n'
 import type { Strings } from './i18n'
 import { DEFAULT_MODEL, isUnsuitable, modelOptions } from './models'
 import type { Lang, Slot } from './models'
-import { speakSection } from './speak'
+import { cleanForSpeech, findSpeakBlock, speakLang, speakSection, voiceOf } from './speak'
+import type { SpeakLang } from './speak'
 import {
   callKey,
   describeCall,
@@ -186,6 +187,7 @@ type Paths = {
   owner: string
   control: string
   glossary: string
+  speak: string
 }
 
 const TTS_STATES = new Set<string>(['absent', 'installing', 'ready', 'error'])
@@ -307,7 +309,29 @@ async function paths($: EngineInterface): Promise<Paths> {
     owner: `${home}\\owner.json`,
     control: `${home}\\control.json`,
     glossary: `${home}\\glossary.txt`,
+    speak: `${home}\\speak.json`,
   }
+}
+
+// Запит слухачу: текст блоку відповіді або stop. Файл пишемо цілим (не злиттям) і без BOM;
+// seq = at = мс, щоб слухач відрізняв новий запит і відкидав застарілий.
+type SpeakRequest = { seq: number; at: number; session: string } & (
+  | { text: string; lang: SpeakLang; voice: string }
+  | { stop: true }
+)
+
+async function requestSpeak($: EngineInterface, req: SpeakRequest): Promise<void> {
+  const p = await paths($)
+  await $.fs.write(p.speak, JSON.stringify(req))
+}
+
+/** Запит від імені цієї сесії; час береться тут. */
+async function sendSpeak(
+  $: EngineInterface,
+  body: { text: string; lang: SpeakLang; voice: string } | { stop: true },
+): Promise<void> {
+  const at = await $.clock.now()
+  await requestSpeak($, { seq: at, at, session: mySession, ...body })
 }
 
 async function readJson($: EngineInterface, path: string): Promise<string | null> {
@@ -372,6 +396,8 @@ function claim($: EngineInterface, how: 'auto' | 'explicit', why: Why): Promise<
     lastOwnerBeat = now
     await update($, owner, () => 'me')
     await update($, locked, () => isLocked)
+    // Голос перейшов сюди (був чужий чи нікого) — що б не говорилось у чаті попереднього власника, зупинити.
+    if (ownerOf(o, mySession, now) !== 'me') await sendSpeak($, { stop: true }).catch(() => {})
   })
 }
 
@@ -1113,6 +1139,28 @@ async function restartDaemon($: EngineInterface): Promise<void> {
   await update($, status, () => ({ state: 'off' as const, msg: t.restarting }))
 }
 
+/** Блок «🔊» з відповіді власника голосу → speak.json. Не власник, озвучення вимкнене чи
+ * блоку нема — нічого. */
+async function speakAnswer($: EngineInterface, answer: string): Promise<void> {
+  const block = findSpeakBlock(answer)
+  if (block === null) return
+  await boot($)
+  const set = await read($, settings)
+  if (!set.speak) return
+  const p = await paths($)
+  if (ownerOf(await readOwner($, p), mySession, await $.clock.now()) !== 'me') return
+  const text = cleanForSpeech(block)
+  if (text === '') return
+  const lang = speakLang(text)
+  await sendSpeak($, { text, lang, voice: voiceOf(set, lang) })
+}
+
+/** Людина набрала текст у чаті-власнику — що говориться, замовкає. Голосова команда (🎙) не рахується. */
+async function stopSpeakIfOwner($: EngineInterface): Promise<void> {
+  const p = await paths($)
+  if (ownerOf(await readOwner($, p), mySession, await $.clock.now()) === 'me') await sendSpeak($, { stop: true })
+}
+
 /** ✖: слухач один на машину, тож просимо його через control.json (мітка часу, як restart). */
 async function cancelCommand($: EngineInterface): Promise<void> {
   await writeControl($, { cancelAt: await $.clock.now() })
@@ -1148,7 +1196,10 @@ export const register: Register = on => {
         return { drop: (await strings($)).dropAnswer }
       }
     }
-    if (isHuman && !e.text.trimStart().startsWith(VOICE_MARK)) isHumanNext = true
+    if (isHuman && !e.text.trimStart().startsWith(VOICE_MARK)) {
+      isHumanNext = true
+      await stopSpeakIfOwner($).catch(() => {})
+    }
     return next(e)
   })
 
@@ -1225,6 +1276,10 @@ export const register: Register = on => {
     const isMine = gen?.agentId ? gen.agentId === e.agentId : isGeneratorReply(e.answer)
     if (e.agentId && gen?.state === 'running' && isMine) {
       await applyGenerated($, e.reason === 'answer' ? e.answer : '').catch(() => {})
+    }
+    // Озвучка — лише відповідь головного циклу; відповідь генератора (навіть без id) не озвучується.
+    if (!e.agentId && e.reason === 'answer' && !isMine && !isGeneratorReply(e.answer)) {
+      await speakAnswer($, e.answer).catch(() => {})
     }
     return done
   })
