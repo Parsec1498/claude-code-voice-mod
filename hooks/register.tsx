@@ -508,7 +508,7 @@ async function switchChat($: EngineInterface, t: Strings, rest: string, seq: num
   await note($, t.noteChatSwitched(chat.title, text)) // саме перемикання сповістить тік
 }
 
-type Control = { muted?: boolean; safeMode?: boolean; restart?: number } & Partial<VoiceSettings>
+type Control = { muted?: boolean; safeMode?: boolean; restart?: number; cancelAt?: number } & Partial<VoiceSettings>
 
 /** control.json → налаштування; невідоме чи бите значення — дефолт. */
 export function settingsOf(c: Control): VoiceSettings {
@@ -1086,6 +1086,11 @@ async function restartDaemon($: EngineInterface): Promise<void> {
   await update($, status, () => ({ state: 'off' as const, msg: t.restarting }))
 }
 
+/** ✖: слухач один на машину, тож просимо його через control.json (мітка часу, як restart). */
+async function cancelCommand($: EngineInterface): Promise<void> {
+  await writeControl($, { cancelAt: await $.clock.now() })
+}
+
 const HUMAN = new Set(['composer', 'bridge', 'sdk'])
 
 export const register: Register = on => {
@@ -1301,6 +1306,10 @@ export const register: Register = on => {
     // Кнопка = гліф; її підпис — підказка, що виринає в рядку при наведенні
     // (hover-група `scope`): нативного тултипа в кнопки API модів не має.
     const tools: { key: string; glyph: string; hint: string; press: () => unknown; primary?: boolean }[] = [
+      // ✖ — лише коли слухач уже в режимі команди (почув активатор / слухає чи розпізнає команду).
+      ...(s.state === 'armed' || s.state === 'transcribing'
+        ? [{ key: 'cancel', glyph: '✖', hint: t.hintCancel, press: () => cancelCommand($), primary: true }]
+        : []),
       // Не власник — 🎧 «Сюди»; власник — режим: «Авто» (за чатом, де пишуть) чи «Закріплено».
       who !== 'me'
         ? {

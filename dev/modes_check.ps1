@@ -39,3 +39,26 @@ function run($file, $control) {
 "I) без автозавершення, голе «Cancel.» окремою фразою (part, cancelled, БЕЗ command):"; run 'barecancel' '{"language":"en","autoEnd":false,"beep":"end"}'
 "J) без автозавершення, «cancel» у кінці довгої (не голої) фрази — через велику модель:"; run 'cancelmid' '{"language":"en","autoEnd":false,"beep":"end"}'
 "K) без автозавершення, «…done, cancel.» однією фразою — скасування сильніше за стоп (cancelled, БЕЗ command):"; run 'donecancel' '{"language":"en","autoEnd":false,"beep":"end"}'
+# Кнопка скасування: слухач у файловому режимі читає все одразу, тож «натиск» (cancelAt у control.json)
+# пишемо, щойно в stdout з'явилась подія $after, — поки слухач ще розпізнає/збирає цю команду.
+function tailText($f) {
+  try { $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite'); $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8); $t = $sr.ReadToEnd(); $sr.Close(); $t } catch { '' }
+}
+function runPress($file, $control, $after) {
+  [IO.File]::WriteAllText("$h\control.json", $control)
+  Remove-Item "$hus.json", "$h\press.out" -ErrorAction SilentlyContinue
+  $p = Start-Process -FilePath $py -ArgumentList @('-u', "`"$script`"", '--home', "`"$h`"", '--file', "`"$h\$file.wav`"", '--no-beep') `
+    -RedirectStandardOutput "$h\press.out" -RedirectStandardError "$h\press.err" -PassThru -WindowStyle Hidden
+  while (-not $p.HasExited) {
+    if ((tailText "$h\press.out") -match $after) {
+      $ms = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+      [IO.File]::WriteAllText("$h\control.json", $control.TrimEnd('}') + ',"cancelAt":' + $ms + '}')
+      break
+    }
+    Start-Sleep -Milliseconds 15
+  }
+  $p.WaitForExit()
+  (tailText "$h\press.out") -split "`r?`n" | Where-Object { $_ -match '"t": "(command|ignored|wake|part|cancelled)"' } | ForEach-Object { "   $_" }
+}
+"L) з автозавершенням, кнопка ✖ одразу після раннього активатора (cancelled, БЕЗ command):"; runPress 'one' '{"language":"en","autoEnd":true,"beep":"end"}' '"t": "wake"'
+"M) без автозавершення, кнопка ✖ після першої фрази диктовки (cancelled, БЕЗ command, хоч «Done» сказано):"; runPress 'multi' '{"language":"en","autoEnd":false,"beep":"end"}' '"t": "part"'

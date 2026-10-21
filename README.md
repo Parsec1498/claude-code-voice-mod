@@ -62,6 +62,7 @@ Switch to English in ⚙ → Language (the default is Ukrainian).
 
 | Control | What it does |
 | --- | --- |
+| ✖ | cancel the command: shown only while the listener is in command mode (wake word heard, dictating or recognizing); nothing goes to the chat — the button version of the cancel word |
 | 🎤 / 🔇 | microphone; off — the listener stops and frees memory |
 | ⚙ | settings |
 | 🕘 | history: what the recognizer heard and what was sent |

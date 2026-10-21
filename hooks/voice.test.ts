@@ -1478,3 +1478,61 @@ test('рядок: прогрес завантаження моделі (⬇) в�
   expect(await again.find({ text: /моделі готові/ })).toBeUndefined()
   await again.unmount()
 })
+
+test('кнопка ✖: лише коли слухач у режимі команди (armed / transcribing), у ready її нема', { timeoutMs: 15000 }, async ($, on) => {
+  let at = T0
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  at += 500
+  let band = await $.ui.mount(BAND)
+  expect(await band.find({ key: 'cancel' })).toBeUndefined()
+  expect(await band.find({ text: /Скасувати команду/ })).toBeUndefined()
+  await band.unmount()
+
+  for (const [state, msg] of [['armed', 'запусти бота'], ['transcribing', null]] as const) {
+    w.fs.set(BUS, JSON.stringify({ at: (at += 500), state, msg, seq: 1, events: [] }))
+    await w.clock.advance(500)
+    band = await $.ui.mount(BAND)
+    expect(await band.find({ key: 'cancel' })).toBeDefined()
+    expect(await band.find({ text: /Скасувати команду/ })).toBeDefined() // підказка hover-групи
+    await band.unmount()
+  }
+
+  w.fs.set(BUS, JSON.stringify({ at: (at += 500), state: 'loading', msg: null, seq: 1, events: [] }))
+  await w.clock.advance(500)
+  band = await $.ui.mount(BAND)
+  expect(await band.find({ key: 'cancel' })).toBeUndefined()
+  await band.unmount()
+})
+
+test('кнопка ✖ англійською: підказка «Cancel the command»', { timeoutMs: 15000 }, async ($, on) => {
+  let at = T0
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: '{"language":"en"}' })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, JSON.stringify({ at: (at += 500), state: 'armed', msg: 'start the bot', seq: 1, events: [] }))
+  await w.clock.advance(500)
+  const band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /Cancel the command/ })).toBeDefined()
+  await band.unmount()
+})
+
+test('кнопка ✖: натиск пише control.json.cancelAt (час), решта полів не міняється', { timeoutMs: 15000 }, async ($, on) => {
+  let at = T0
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: '{"muted":false,"beep":"wake"}' })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, JSON.stringify({ at: (at += 500), state: 'armed', msg: 'запусти бота', seq: 1, events: [] }))
+  await w.clock.advance(500)
+  const before = JSON.parse(w.fs.get(CONTROL) ?? '{}')
+  const band = await $.ui.mount(BAND)
+  await band.press({ key: 'cancel' })
+  await band.unmount()
+  const after = JSON.parse(w.fs.get(CONTROL) ?? '{}')
+  expect(typeof after.cancelAt).toBe('number')
+  expect(after.cancelAt).toBeGreaterThanOrEqual(T0 + 1000)
+  const { cancelAt: _at, ...rest } = after
+  expect(rest).toEqual(before) // злиттям, як restart
+  expect(w.submitted).toEqual([]) // у чат нічого не йде
+})

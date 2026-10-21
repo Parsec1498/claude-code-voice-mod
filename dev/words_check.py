@@ -194,4 +194,35 @@ got, calls, errors, failed = try_load(set())  # усе гаразд — один
 assert got == ("cuda", ("base", "medium")) and len(calls) == 1 and not errors
 got, calls, errors, failed = try_load({("cuda", None), ("cpu", None)})
 assert got is None and len(calls) == 4 and not failed  # нічого не піднялось — виняток нагору
+# Кнопка скасування: мітка cancelAt від мода — не налаштування (version не росте), сміття -> 0.
+def cancel_at_of(data: dict) -> float:
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "control.json").write_text(json.dumps(data), "utf-8")
+        c = L.Control(Path(d))
+        c.poll()
+        return c.cancel_at
+
+
+assert cancel_at_of({"cancelAt": 1_700_000_000_000}) == 1_700_000_000_000
+for junk in ("x", "123", None, [5], {"a": 1}, True):
+    assert cancel_at_of({"cancelAt": junk, "beep": "off"}) == 0, junk
+assert cancel_at_of({}) == 0
+with tempfile.TemporaryDirectory() as d:
+    cj = Path(d) / "control.json"
+    cj.write_text('{"beep":"off"}', "utf-8")
+    c = L.Control(Path(d))
+    c.poll()
+    v = c.version
+    cj.write_text('{"beep":"off","cancelAt":1700000000000}', "utf-8")
+    os.utime(cj, (1, 1))
+    c.poll()
+    assert c.cancel_at == 1_700_000_000_000 and c.version == v  # не налаштування
+# Чи є нове «скасувати»: новіше за оброблене і за початок фрази, що розпізнається.
+assert L.cancel_due(5, 3) and not L.cancel_due(3, 3) and not L.cancel_due(0, 0)
+assert not L.cancel_due(5, 3, since=7) and L.cancel_due(8, 3, since=7)
+# Що скасовується: диктовка (навіть порожня), ранній активатор, очікування команди; інакше лише мітка.
+assert L.cancel_active(texts=[], armed=False, early_hit=False)
+assert L.cancel_active(texts=None, armed=True, early_hit=False)
+assert L.cancel_active(texts=None, armed=False, early_hit=True)
+assert not L.cancel_active(texts=None, armed=False, early_hit=False)
 print("words ok")

@@ -412,6 +412,23 @@ def lang_of(code: object) -> str:
     return code if isinstance(code, str) and code in LANG else "uk"
 
 
+def num_of(value: object) -> float:
+    """Числове поле control.json (мітка часу, мс); будь-що інше — 0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def cancel_due(at: float, done: float, since: float = 0.0) -> bool:
+    """Чи є нове «скасувати» кнопкою: новіше за вже оброблене і за початок фрази `since` (мс)."""
+    return at > done and at > since
+
+
+def cancel_active(texts: list[str] | None, armed: bool, early_hit: bool) -> bool:
+    """Чи є що скасовувати: диктовка (навіть порожня), ранній активатор чи очікування команди."""
+    return texts is not None or armed or early_hit
+
+
 def text_of(value: object) -> str:
     """Рядкове поле control.json; будь-що інше — порожньо (= типове)."""
     return value.strip() if isinstance(value, str) else ""
@@ -634,6 +651,7 @@ class Control:
         self.mtime = -1.0
         self.muted = False
         self.restart = 0.0  # мітка (мс) останнього «перезапусти» від сесії
+        self.cancel_at = 0.0  # мітка (мс) останнього натиску ✖ «скасувати команду»; не налаштування
         # Налаштування з вікна ⚙ мода — спільні для всіх сесій, як і muted.
         self.beep = "end"      # off | wake (після активатора) | end (після команди) | both
         self.auto_end = True   # False: команда триває до стоп-слова, тиша її не обриває
@@ -660,6 +678,7 @@ class Control:
             data = json.loads(self.path.read_text("utf-8"))
             muted = bool(data.get("muted"))
             self.restart = float(data.get("restart") or 0)
+            self.cancel_at = num_of(data.get("cancelAt"))
             beep = data.get("beep") if data.get("beep") in ("off", "wake", "end", "both") else "end"
             auto_end = data.get("autoEnd") is not False
             wake = str(data.get("wake") or "").strip()
@@ -980,6 +999,7 @@ def main() -> int:
     armed_until = 0.0
     last_state = None
     born = time.time() * 1000
+    cancel_done = born  # остання оброблена мітка ✖; старший за запуск натиск не рахується
     muted_since: float | None = None
     last_alive_check = time.time()
     # Ранній активатор: фразу, що ще звучить, мала модель перевіряє на цих
@@ -1091,6 +1111,16 @@ def main() -> int:
         else:
             emit(t="ignored", text=raw)
 
+    def cancel_pressed(since_ms: float = 0.0, fresh: bool = True) -> bool:
+        """Новий натиск ✖ (control.cancelAt) після since_ms? Так — позначаємо його обробленим."""
+        nonlocal cancel_done
+        if fresh:
+            control.poll()  # кнопку могли натиснути, поки блокувала велика модель
+        if cancel_due(control.cancel_at, cancel_done, since_ms):
+            cancel_done = control.cancel_at
+            return True
+        return False
+
     def cancel_command(text: str, cued: bool = False) -> None:
         """Скасування: у чат нічого не йде, звучить сигнал кінця, текст зібраного — лише в історію."""
         if not cued:
@@ -1108,6 +1138,10 @@ def main() -> int:
             return
         if not hit:
             text = raw
+        # ✖ натиснули, поки велика модель розпізнавала, — результат відкидаємо.
+        if cancel_pressed(started * 1000):
+            cancel_command(text, cued)
+            return
         # Слово скасування — раніше за стоп-слово: «… роби відміна» = скасування.
         has_cancel, rest = canceller.split_tail(text)
         if has_cancel:
@@ -1139,7 +1173,7 @@ def main() -> int:
             # Фраза — саме лише «Роби»/«Відміна»: решту вже розпізнано, велика модель не потрібна.
             whole, whole_raw = " ".join(texts or []), " ".join(raws)
             stop_collect()
-            if bare == "cancel":
+            if bare == "cancel" or cancel_pressed(started * 1000):
                 cancel_command(whole, cued=True)
             else:
                 send(whole, whole_raw, started, cued=True)
@@ -1148,6 +1182,11 @@ def main() -> int:
         raw = big(audio, " ".join(texts or []))
         raws.append(raw)
         emit(t="part", text=raw)  # проміжна фраза диктовки — в історію
+        if cancel_pressed(started * 1000):  # ✖ натиснули, поки велика модель розпізнавала
+            whole = " ".join([*texts, raw])
+            stop_collect()
+            cancel_command(whole)
+            return
         has_cancel, rest = canceller.split_tail(raw)
         if has_cancel:
             whole = " ".join([*texts, rest] if rest else texts)
@@ -1253,6 +1292,18 @@ def main() -> int:
                      text=tr("no_stop", stop=stop_word, min=int(COLLECT_MAX_S // 60)))
                 stop_collect()
             armed = time.time() < armed_until
+            if cancel_pressed(fresh=False):  # control.poll() цієї ітерації вже був
+                # Кнопка ✖: скасувати те, що триває; нічого не триває — лише мітка.
+                if cancel_active(texts, armed, early_hit):
+                    whole = " ".join(texts or [])
+                    stop_collect()
+                    armed_until, early_hit, armed = 0.0, False, False
+                    seg.reset()  # фраза, що ще звучить, у велику модель не піде
+                    if not args.file:
+                        while not frames.empty():
+                            frames.get_nowait()
+                    cancel_command(whole)
+                    continue
             speaking = seg.buf is not None
             if texts is None and not speaking and not early_hit and time.time() >= error_until:
                 got = downloader.progress()

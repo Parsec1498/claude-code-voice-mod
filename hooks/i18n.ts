@@ -85,6 +85,7 @@ export type Strings = {
   hintModePinned: string
   toastAuto: string
   toastPinned: string
+  hintCancel: string
   hintMuteOn: string
   hintMuteOff: string
   hintSettingsShow: string
@@ -295,6 +296,7 @@ const uk: Strings = {
   hintModePinned: 'Закріплено: голос тут, хоч би де ви писали; перемкнути — 🎧 в іншому чаті чи голосом. Натисніть — Авто',
   toastAuto: 'Авто: голос іде за чатом, де ви пишете',
   toastPinned: 'Голос закріплено за цим чатом',
+  hintCancel: 'Скасувати команду',
   hintMuteOn: 'Увімкнути мікрофон',
   hintMuteOff: 'Вимкнути мікрофон',
   hintSettingsShow: 'Налаштування',
@@ -526,6 +528,7 @@ const en: Strings = {
   hintModePinned: 'Pinned: voice stays here wherever you write; switch with 🎧 in another chat or by voice. Press for Auto',
   toastAuto: 'Auto: voice follows the chat you write in',
   toastPinned: 'Voice pinned to this chat',
+  hintCancel: 'Cancel the command',
   hintMuteOn: 'Unmute the microphone',
   hintMuteOff: 'Mute the microphone',
   hintSettingsShow: 'Settings',
