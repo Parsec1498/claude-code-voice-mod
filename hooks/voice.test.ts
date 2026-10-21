@@ -1713,3 +1713,138 @@ test('speak: голос перейшов у цю сесію (claim) → stop; у
   await $.command.run({ command: 'voice-here' } as never) // вже тут — перенесення нема
   expect(speakOf(w)).toBeUndefined()
 })
+
+// ── ⚙ і рядок стану: озвучення ──────────────────────────────────────────────────────
+const ttsBus = (at: number, tts: string, extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ at, state: 'ready', msg: null, seq: 1, events: [], tts, voices: [], ...extra })
+const controlOf = (w: { fs: Map<string, string> }) => JSON.parse(w.fs.get(CONTROL) ?? '{}') as Record<string, unknown>
+
+test('⚙ озвучення: tts absent — кнопка встановлення (~140 МБ) пише ttsInstall, перемикача нема', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'absent') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ key: 'ttsInstall' })).toBeDefined()
+  expect(await ui.find({ text: /~140 МБ/ })).toBeDefined()
+  expect(await ui.find({ key: 'speak' })).toBeUndefined()
+  await ui.press({ key: 'ttsInstall' })
+  await ui.unmount()
+  const c = controlOf(w)
+  expect(typeof c.ttsInstall).toBe('number')
+  expect(c.ttsInstall as number).toBeGreaterThanOrEqual(T0)
+  expect(c.speak).toBeUndefined()
+})
+
+test('⚙ озвучення: англійською — «~140 MB»; error — «повторити»', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'absent'), [CONTROL]: '{"language":"en"}' })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  let ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ text: /~140 MB/ })).toBeDefined()
+  await ui.unmount()
+  w.fs.set(BUS, ttsBus(T0 + 500, 'error'))
+  await w.clock.advance(500)
+  ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ text: new RegExp(STR.en.ttsRetry.replace(/[()~⬇]/g, '.')) })).toBeDefined()
+  expect(await ui.find({ key: 'ttsInstall' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('⚙ озвучення: installing — текст прогресу з шини, без кнопки', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'absent') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, ttsBus(T0 + 500, 'installing', { msg: '⬇ озвучення: 42 МБ' }))
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ key: 'ttsInstall' })).toBeUndefined()
+  expect(await ui.find({ key: 'speak' })).toBeUndefined()
+  expect(await ui.find({ text: /42 МБ/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('⚙ озвучення: ready — перемикач пише speak: true і назад', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'ready', { voices: [DEFAULT_VOICE.uk] }) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ key: 'ttsInstall' })).toBeUndefined()
+  await ui.press({ key: 'speak' })
+  expect(controlOf(w).speak).toBe(true)
+  await ui.press({ key: 'speak' })
+  expect(controlOf(w).speak).toBe(false)
+  await ui.unmount()
+})
+
+test('⚙ озвучення: «Розширені» — голоси (список з ⬇ у мові інтерфейсу) і видалення; лише при ready', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'absent') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  let ui = await settingsUi(x => $.ui.mount(x))
+  expect(await ui.find({ key: 'speakVoiceUk' })).toBeUndefined()
+  expect(await ui.find({ key: 'ttsRemove' })).toBeUndefined()
+  await ui.unmount()
+
+  w.fs.set(BUS, ttsBus(T0 + 500, 'ready', { voices: [DEFAULT_VOICE.uk] }))
+  await w.clock.advance(500)
+  ui = await settingsUi(x => $.ui.mount(x))
+  expect(await ui.find({ key: 'speakVoiceUk' })).toBeDefined()
+  expect(await ui.find({ key: 'speakVoiceEn' })).toBeDefined()
+  await ui.select({ key: 'speakVoiceUk', value: 'uk_UA-lada-x_low' })
+  expect(controlOf(w).speakVoiceUk).toBe('uk_UA-lada-x_low')
+  await ui.select({ key: 'speakVoiceEn', value: 'en_GB-cori-medium' })
+  expect(controlOf(w).speakVoiceEn).toBe('en_GB-cori-medium')
+  await ui.unmount()
+})
+
+test('⚙ озвучення: видалити — пише ttsRemove і speak: false', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', {
+    [BUS]: ttsBus(T0, 'ready', { voices: [DEFAULT_VOICE.uk] }),
+    [CONTROL]: '{"speak":true}',
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const ui = await settingsUi(x => $.ui.mount(x))
+  await ui.press({ key: 'ttsRemove' })
+  await ui.unmount()
+  const c = controlOf(w)
+  expect(typeof c.ttsRemove).toBe('number')
+  expect(c.ttsRemove as number).toBeGreaterThanOrEqual(T0)
+  expect(c.speak).toBe(false)
+})
+
+test('installing → ready: озвучення вмикається один раз; пізніше вимкнене людиною — не вмикається знову', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'absent') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, ttsBus(T0 + 500, 'installing', { msg: '⬇ 10 МБ' }))
+  await w.clock.advance(500)
+  expect(controlOf(w).speak).toBeUndefined()
+  w.fs.set(BUS, ttsBus(T0 + 1000, 'ready', { voices: [DEFAULT_VOICE.uk] }))
+  await w.clock.advance(500)
+  expect(controlOf(w).speak).toBe(true)
+  w.fs.set(CONTROL, JSON.stringify({ ...controlOf(w), speak: false }))
+  await w.clock.advance(1500)
+  expect(controlOf(w).speak).toBe(false)
+})
+
+test('absent → ready без installing (готове з минулого разу): speak не вмикається саме', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'ready', { voices: [DEFAULT_VOICE.uk] }) })
+  await $.session.start(START)
+  await w.clock.advance(1500)
+  expect(controlOf(w).speak).toBeUndefined()
+})
+
+test('рядок стану: speaking — «🔊 текст», кнопка ✖ пише cancelAt', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'ready') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, ttsBus(T0 + 500, 'ready', { state: 'speaking', msg: 'Готово, тести пройшли' }))
+  await w.clock.advance(500)
+  const band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /🔊 Готово, тести пройшли/ })).toBeDefined()
+  expect(await band.find({ key: 'cancel' })).toBeDefined()
+  await band.press({ key: 'cancel' })
+  await band.unmount()
+  expect(typeof controlOf(w).cancelAt).toBe('number')
+})

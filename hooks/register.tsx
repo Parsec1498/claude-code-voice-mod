@@ -19,7 +19,7 @@ import { DEFAULT_WORDS, STR, langOf, reasonText } from './i18n'
 import type { Strings } from './i18n'
 import { DEFAULT_MODEL, isUnsuitable, modelOptions } from './models'
 import type { Lang, Slot } from './models'
-import { cleanForSpeech, findSpeakBlock, speakLang, speakSection, voiceOf } from './speak'
+import { cleanForSpeech, findSpeakBlock, speakLang, speakSection, voiceOf, voiceOptions } from './speak'
 import type { SpeakLang } from './speak'
 import {
   callKey,
@@ -681,7 +681,10 @@ async function tick($: EngineInterface): Promise<void> {
   }
   if (bus?.tts && (await read($, tts)) !== bus.tts) {
     const st = bus.tts
+    const wasInstalling = (await read($, tts)) === 'installing'
     await update($, tts, () => st)
+    // Щойно встановили — одразу вмикаємо (один раз); далі перемикач у людини.
+    if (wasInstalling && st === 'ready') await setSetting($, { speak: true })
   }
   if (bus?.voices && JSON.stringify(await read($, voices)) !== JSON.stringify(bus.voices)) {
     const list = bus.voices
@@ -1161,6 +1164,17 @@ async function stopSpeakIfOwner($: EngineInterface): Promise<void> {
   if (ownerOf(await readOwner($, p), mySession, await $.clock.now()) === 'me') await sendSpeak($, { stop: true })
 }
 
+/** Кнопка «Встановити озвучення»: Piper і голос слухач ставить сам, лише після цього натиску. */
+async function installTts($: EngineInterface): Promise<void> {
+  await writeControl($, { ttsInstall: await $.clock.now() })
+}
+
+/** Видалення озвучення: слухач прибирає Piper і голоси; перемикач гасимо одразу. */
+async function removeTts($: EngineInterface): Promise<void> {
+  await writeControl($, { ttsRemove: await $.clock.now(), speak: false })
+  await update($, settings, cur => ({ ...cur, speak: false }))
+}
+
 /** ✖: слухач один на машину, тож просимо його через control.json (мітка часу, як restart). */
 async function cancelCommand($: EngineInterface): Promise<void> {
   await writeControl($, { cancelAt: await $.clock.now() })
@@ -1395,6 +1409,7 @@ export const register: Register = on => {
         s.state === 'error' ||
         s.state === 'armed' ||
         s.state === 'transcribing' ||
+        s.state === 'speaking' || // текст, що зараз звучить
         (s.state === 'ready' && s.msg.startsWith('⬇'))) // прогрес докачки моделі
         ? s.msg
         : null
@@ -1402,8 +1417,8 @@ export const register: Register = on => {
     // Кнопка = гліф; її підпис — підказка, що виринає в рядку при наведенні
     // (hover-група `scope`): нативного тултипа в кнопки API модів не має.
     const tools: { key: string; glyph: string; hint: string; press: () => unknown; primary?: boolean }[] = [
-      // ✖ — лише коли слухач уже в режимі команди (почув активатор / слухає чи розпізнає команду).
-      ...(s.state === 'armed' || s.state === 'transcribing'
+      // ✖ — лише коли слухач уже в режимі команди (почув активатор / слухає чи розпізнає команду) або говорить.
+      ...(s.state === 'armed' || s.state === 'transcribing' || s.state === 'speaking'
         ? [{ key: 'cancel', glyph: '✖', hint: t.hintCancel, press: () => cancelCommand($), primary: true }]
         : []),
       // Не власник — 🎧 «Сюди»; власник — режим: «Авто» (за чатом, де пишуть) чи «Закріплено».
@@ -1469,6 +1484,10 @@ export const register: Register = on => {
               <Text key="heard" size="footnote" color={who === 'me' ? 'suggestion' : 'warning'} wrap="truncate-start">
                 🎙 {who === 'me' ? '' : who === 'other' ? t.liveTo(otherTitle ?? t.otherChat) : t.liveNowhere}
                 {msg}
+              </Text>
+            ) : msg && s.state === 'speaking' ? (
+              <Text key="heard" size="footnote" color="suggestion" wrap="truncate-end">
+                {t.speakingLine(msg)}
               </Text>
             ) : msg || !heard ? (
               <Text key="heard" size="footnote" dimColor wrap="truncate-end">
@@ -1585,6 +1604,9 @@ export const register: Register = on => {
     const dictStats = glossaryStats(dictionary)
     const installed = new Set(await read($, models))
     const dev = await read($, device)
+    const ttsState = await read($, tts)
+    const voiceList = new Set(await read($, voices))
+    const progress = (await read($, status)).msg
     const defaults = DEFAULT_WORDS[set.language]
     const stopWord = firstWord(set.stop, defaults.stop)
     const cancelWord = firstWord(set.cancel, defaults.cancel)
@@ -1740,6 +1762,36 @@ export const register: Register = on => {
             onSelect={(v: string) => void setSetting($, { beep: v as VoiceSettings['beep'] })}
           />,
           t.beepHint,
+        )}
+        {row(
+          'speak',
+          t.setSpeak,
+          ttsState === 'ready' ? (
+            <Button
+              key="speak"
+              label={set.speak ? t.on : t.off}
+              onPress={() => void setSetting($, { speak: !set.speak }).catch(() => {})}
+            />
+          ) : ttsState === 'installing' ? (
+            // Прогрес — те, що слухач пише в шину (`bus.msg`).
+            <Text key="ttsProgress" size="footnote" color="suggestion" wrap="truncate-end">
+              {progress ?? t.ttsInstalling}
+            </Text>
+          ) : (
+            <Button
+              key="ttsInstall"
+              label={ttsState === 'error' ? t.ttsRetry : t.ttsInstall}
+              onPress={() => void installTts($).catch(() => {})}
+            />
+          ),
+          t.speakHint,
+          ttsState === 'ready' || ttsState === 'installing' ? null : (
+            <Box key="ttsNote">
+              <Text size="footnote" dimColor>
+                {t.ttsInstallNote}
+              </Text>
+            </Box>
+          ),
         )}
         <Box key="r-restart" flexDirection="row" alignItems="center" columnGap={1} marginBottom={1}>
           <Button key="restart" label={t.restartButton} onPress={() => void restartDaemon($)} />
@@ -1926,6 +1978,39 @@ export const register: Register = on => {
                         onSubmit={(v: string) => void setSetting($, { filterNotes: v.trim() })}
                       />,
                       t.filterNotesHint,
+                    ),
+                  ]
+                : []),
+              ...(ttsState === 'ready'
+                ? [
+                    group('speech', t.groupSpeech),
+                    row(
+                      'speakVoiceUk',
+                      t.setVoiceUk,
+                      <Select
+                        key="speakVoiceUk"
+                        value={voiceOf(set, 'uk')}
+                        options={voiceOptions('uk', voiceList, t.unitMb)}
+                        onSelect={(v: string) => void setSetting($, { speakVoiceUk: v })}
+                      />,
+                      t.voiceHint,
+                    ),
+                    row(
+                      'speakVoiceEn',
+                      t.setVoiceEn,
+                      <Select
+                        key="speakVoiceEn"
+                        value={voiceOf(set, 'en')}
+                        options={voiceOptions('en', voiceList, t.unitMb)}
+                        onSelect={(v: string) => void setSetting($, { speakVoiceEn: v })}
+                      />,
+                      t.voiceHint,
+                    ),
+                    row(
+                      'ttsRemove',
+                      t.ttsRemoveTitle,
+                      <Button key="ttsRemove" label={t.ttsRemove} onPress={() => void removeTts($).catch(() => {})} />,
+                      t.ttsRemoveHint,
                     ),
                   ]
                 : []),

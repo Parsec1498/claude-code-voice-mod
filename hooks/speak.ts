@@ -135,13 +135,14 @@ export function voiceOf(set: VoiceSettings, lang: SpeakLang): string {
   return chosen !== '' ? chosen : DEFAULT_VOICE[lang]
 }
 
-/** Список голосів мови для вибору: `назва · ліцензія`, ` ⬇ N МБ` — якщо ще не на диску. */
+/** Список голосів мови для вибору: `назва · ліцензія`, ` ⬇ N <unit>` — якщо ще не на диску (unit — з мови інтерфейсу). */
 export function voiceOptions(
   lang: SpeakLang,
   installed: ReadonlySet<string>,
+  unit: string,
 ): { value: string; label: string }[] {
   return VOICES.filter(v => v.lang === lang).map(v => ({
     value: v.name,
-    label: `${v.name} · ${v.license}${installed.has(v.name) ? '' : ` ⬇ ${v.mb} МБ`}`,
+    label: `${v.name} · ${v.license}${installed.has(v.name) ? '' : ` ⬇ ${v.mb} ${unit}`}`,
   }))
 }

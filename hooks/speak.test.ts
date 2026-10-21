@@ -57,10 +57,12 @@ test('каталог: лише вільні ліцензії, обидві мо�
 })
 
 test('варіанти голосів: ⬇ лише в неустановлених', () => {
-  const opts = voiceOptions('uk', new Set([DEFAULT_VOICE.uk]))
+  const opts = voiceOptions('uk', new Set([DEFAULT_VOICE.uk]), 'МБ')
   expect(opts.find(o => o.value === DEFAULT_VOICE.uk)?.label).not.toContain('⬇')
   expect(opts.filter(o => o.label.includes('⬇')).length).toBe(4)
   expect(opts.every(o => VOICES.find(v => v.name === o.value)?.lang === 'uk')).toBe(true)
+  expect(opts.find(o => o.value === 'uk_UA-lada-x_low')?.label).toBe('uk_UA-lada-x_low · Apache-2.0 ⬇ 21 МБ')
+  expect(voiceOptions('uk', new Set(), 'MB')[0]?.label).toContain('⬇ 21 MB')
 })
 
 test('голос: вибраний або типовий для мови', () => {

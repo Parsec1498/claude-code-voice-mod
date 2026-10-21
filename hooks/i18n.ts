@@ -242,6 +242,21 @@ export type Strings = {
   groupRecognition: string
   groupProcessing: string
   groupSafety: string
+  // озвучення відповідей
+  setSpeak: string
+  speakHint: string
+  ttsInstall: string
+  ttsRetry: string
+  ttsInstalling: string
+  ttsInstallNote: string
+  groupSpeech: string
+  setVoiceUk: string
+  setVoiceEn: string
+  voiceHint: string
+  ttsRemoveTitle: string
+  ttsRemove: string
+  ttsRemoveHint: string
+  speakingLine: (text: string) => string
   filterNotesPlaceholder: string
   filterNotesHint: string
   // вибір моделей розпізнавання
@@ -474,6 +489,23 @@ const uk: Strings = {
   groupRecognition: 'Розпізнавання',
   groupProcessing: 'Обробка команди',
   groupSafety: 'Безпека й чати',
+  setSpeak: 'Озвучувати відповіді',
+  speakHint:
+    'Агент додає в кінець відповіді короткий блок «🔊 Озвучити:», і мод читає його вголос, поки ви працюєте. Говорить лише чат, що слухає голос. Набрали щось у чаті — озвучення замовкає.',
+  ttsInstall: '⬇ Встановити озвучення (~140 МБ)',
+  ttsRetry: '⬇ Повторити встановлення (~140 МБ)',
+  ttsInstalling: 'Встановлюю озвучення…',
+  ttsInstallNote:
+    'Piper (GPL-3.0) ставиться з PyPI окремо від мода, а голос — з Hugging Face. Нічого не качається, доки ви не натиснете кнопку.',
+  groupSpeech: 'Озвучення',
+  setVoiceUk: 'Голос (українська)',
+  setVoiceEn: 'Голос (англійська)',
+  voiceHint:
+    'Голоси з вільними ліцензіями. ⬇ — ще не завантажений: вибір такого і є згодою на завантаження; перше озвучення цим голосом триває довше.',
+  ttsRemoveTitle: 'Встановлене озвучення',
+  ttsRemove: 'Видалити озвучення',
+  ttsRemoveHint: 'Прибирає Piper і всі голоси з диска й вимикає озвучення. Знову встановити можна кнопкою в ⚙.',
+  speakingLine: text => `🔊 ${text}`,
   filterNotesPlaceholder: 'немає',
   filterNotesHint:
     'Короткі свої правила, що дописуються в кінець інструкції (і своєї, і типової). Наприклад: «MyApp і Login пиши латиницею».',
@@ -706,6 +738,23 @@ const en: Strings = {
   groupRecognition: 'Recognition',
   groupProcessing: 'Command processing',
   groupSafety: 'Safety and chats',
+  setSpeak: 'Speak answers',
+  speakHint:
+    'The agent adds a short "🔊 Speak:" block at the end of its answer, and the mod reads it aloud while you work. Only the chat that listens for your voice speaks. Type something in the chat and the speech stops.',
+  ttsInstall: '⬇ Install speech (~140 MB)',
+  ttsRetry: '⬇ Retry installing (~140 MB)',
+  ttsInstalling: 'Installing speech…',
+  ttsInstallNote:
+    'Piper (GPL-3.0) is installed from PyPI separately from the mod, and the voice comes from Hugging Face. Nothing is downloaded until you press the button.',
+  groupSpeech: 'Speech',
+  setVoiceUk: 'Voice (Ukrainian)',
+  setVoiceEn: 'Voice (English)',
+  voiceHint:
+    'Voices with free licenses. ⬇ — not downloaded yet: choosing it is your consent to download; the first speech with that voice takes longer.',
+  ttsRemoveTitle: 'Installed speech',
+  ttsRemove: 'Remove speech',
+  ttsRemoveHint: 'Deletes Piper and all voices from the disk and turns speech off. You can install it again with the button in ⚙.',
+  speakingLine: text => `🔊 ${text}`,
   filterNotesPlaceholder: 'none',
   filterNotesHint:
     'Short rules of your own, appended to the end of the instruction (custom or default). For example: "Write MyApp and Login in Latin letters".',
