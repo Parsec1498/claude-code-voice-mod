@@ -19,6 +19,7 @@ import { DEFAULT_WORDS, STR, langOf, reasonText } from './i18n'
 import type { Strings } from './i18n'
 import { DEFAULT_MODEL, isUnsuitable, modelOptions } from './models'
 import type { Lang, Slot } from './models'
+import { speakSection } from './speak'
 import {
   callKey,
   describeCall,
@@ -1226,6 +1227,20 @@ export const register: Register = on => {
       await applyGenerated($, e.reason === 'answer' ? e.answer : '').catch(() => {})
     }
     return done
+  })
+
+  // Озвучення ввімкнене — інструкція про блок «🔊» ОСТАННІМ розділом (session: текст залежить від мови).
+  // Збій не йде в рушій: без розділу промпт лишається таким, як його склав рушій.
+  on('prompt.compose', async ($, e, next) => {
+    const done = await next(e)
+    try {
+      await boot($)
+      const set = await read($, settings)
+      if (!set.speak) return done
+      return { sections: [...done.sections, { id: 'voice-mod:speak', text: speakSection(set.language), scope: 'session' as const }] }
+    } catch {
+      return done
+    }
   })
 
   on('turn.start', async ($, e, next) => {

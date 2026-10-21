@@ -1560,3 +1560,32 @@ test('toEntries: подія spoke потрапляє в журнал', () => {
   const out = toEntries([{ seq: 3, kind: 'spoke', text: 'Готово.' }])
   expect(out).toEqual([{ seq: 3, kind: 'spoke', text: 'Готово.', ms: null }])
 })
+
+// Базовий розділ промпту від рушія: на ньому перевіряємо, що мод дописує свій ОСТАННІМ.
+const COMPOSE_INPUT = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as never
+const BASE_SECTIONS = [{ id: 'intro', text: 'base', scope: 'shared' as const }]
+
+test('prompt.compose: озвучення вимкнене — секції рушія без змін', async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: JSON.stringify({ speak: false }) })
+  on('prompt.compose', async () => ({ sections: BASE_SECTIONS }))
+  await $.session.start(START)
+  await w.clock.advance(500)
+  expect((await $.prompt.compose(COMPOSE_INPUT)).sections).toEqual(BASE_SECTIONS)
+})
+
+test('prompt.compose: озвучення ввімкнене — остання секція voice-mod:speak, мова з налаштувань', async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: JSON.stringify({ speak: true, language: 'uk' }) })
+  on('prompt.compose', async () => ({ sections: BASE_SECTIONS }))
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const uk = (await $.prompt.compose(COMPOSE_INPUT)).sections
+  expect(uk.slice(0, -1)).toEqual(BASE_SECTIONS)
+  expect(uk[uk.length - 1]).toMatchObject({ id: 'voice-mod:speak', scope: 'session' })
+  expect(uk[uk.length - 1]?.text).toContain('🔊 Озвучити:')
+
+  w.fs.set(CONTROL, JSON.stringify({ speak: true, language: 'en' }))
+  await w.clock.advance(1500)
+  const en = (await $.prompt.compose(COMPOSE_INPUT)).sections
+  expect(en[en.length - 1]?.text).toContain('🔊 Speak:')
+  expect((await $.prompt.compose(COMPOSE_INPUT)).sections).toEqual(en) // двічі поспіль — той самий текст (кеш)
+})
