@@ -74,7 +74,11 @@ function world(on: On, session: string, files: Record<string, string>, replies: 
     return { value: undefined }
   })
   on('ui.status', () => ({ value: undefined }))
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   on('model.complete', async (_$, e) => {
     calls.push({ model: e.model, timeoutMs: e.timeoutMs, system: String(e.system) })
     const raw = String(e.prompt).replace(/<\/?command>/g, '')
@@ -101,7 +105,7 @@ function world(on: On, session: string, files: Record<string, string>, replies: 
     await new Promise<void>(r => next.signal.addEventListener('abort', () => r()))
     return { value: { code: 0, signal: null } }
   })
-  return { clock, fs, submitted, spawned, calls, ran, panes, commands, agents, spawnedAgents }
+  return { clock, fs, submitted, spawned, calls, ran, panes, commands, agents, spawnedAgents, toasts }
 }
 
 const START = { cwd: 'D:\\Dev', surface: 'desktop', isInteractive: true } as const
@@ -122,7 +126,7 @@ test('перша сесія бере мікрофон і отримує лише
   expect(w.submitted).toEqual(['🎙 запусти Login на всіх'])
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ text: /Активна сесія/ })).toBeDefined()
+  expect(await ui.find({ text: /Голос тут/ })).toBeDefined()
   expect(await ui.find({ text: /запусти Login на всіх/ })).toBeDefined()
   await ui.unmount()
 })
@@ -142,8 +146,8 @@ test('чужа сесія-власник: команд не беремо, док
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ text: /Інша сесія/ })).toBeDefined()
-    expect(await ui.find({ text: /Слухати в цій сесії/ })).toBeDefined() // підказка кнопки 🎧
+    expect(await ui.find({ text: /Голос → «інший чат»/ })).toBeDefined() // назви A ще не знаємо
+    expect(await ui.find({ text: /Сюди: голос слухатиме цей чат/ })).toBeDefined() // підказка кнопки 🎧
     await ui.unmount()
   }
 
@@ -163,7 +167,8 @@ test('замочок: власник закріплює себе, пульс з�
   await w.clock.advance(500)
 
   let ui = await $.ui.mount(BAND)
-  expect(await ui.find({ text: /Закріпити голос за цим чатом/ })).toBeDefined() // підказка 🔓
+  expect(await ui.find({ text: /🔓 Авто/ })).toBeDefined() // режим — словами, не лише гліфом
+  expect(await ui.find({ text: /Авто: голос іде за чатом, де ви пишете/ })).toBeDefined()
   await ui.press({ key: 'lock' })
   await ui.unmount()
   expect(JSON.parse(w.fs.get(OWNER) ?? '{}')).toMatchObject({ session: 'A', locked: true })
@@ -173,7 +178,8 @@ test('замочок: власник закріплює себе, пульс з�
   expect(JSON.parse(w.fs.get(OWNER) ?? '{}')).toMatchObject({ session: 'A', at: T0 + 3000, locked: true })
 
   ui = await $.ui.mount(BAND)
-  expect(await ui.find({ text: /Зняти закріплення/ })).toBeDefined()
+  expect(await ui.find({ text: /🔒 Закріплено/ })).toBeDefined()
+  expect(await ui.find({ text: /Закріплено: голос тут/ })).toBeDefined()
   await ui.press({ key: 'lock' })
   await ui.unmount()
   expect(JSON.parse(w.fs.get(OWNER) ?? '{}').locked).toBe(false)
@@ -194,8 +200,8 @@ test('замочок: відправка в іншому чаті голос н�
   expect(res.text).toBe(STR.uk.resLockNotOwner) // замкнути може лише власник
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ text: /Інша сесія 🔒/ })).toBeDefined()
-  expect(await ui.find({ text: /закріплення зніметься/ })).toBeDefined() // підказка 🎧
+  expect(await ui.find({ text: /Голос → «інший чат» 🔒/ })).toBeDefined()
+  expect(await ui.find({ text: /зніметься/ })).toBeDefined() // підказка 🎧
   await ui.press({ key: 'here' })
   await ui.unmount()
   expect(JSON.parse(w.fs.get(OWNER) ?? '{}')).toMatchObject({ session: 'B', locked: false })
@@ -232,7 +238,7 @@ test('зміна чату: власник передає голос і кома�
     handoff: { seq: 2, text: 'Перезапусти сервер.' },
   })
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ text: /Інша сесія/ })).toBeDefined()
+  expect(await ui.find({ text: /Голос → «/ })).toBeDefined()
   await ui.unmount()
 
   w.fs.set(ALIVE_B, JSON.stringify({ at: T0 + 1000, ref: 'b48a00' }))
@@ -277,6 +283,60 @@ test('зміна чату: посеред команди — звичайний 
   await w.clock.advance(500)
   expect(w.submitted).toHaveLength(1)
   expect(JSON.parse(w.fs.get(OWNER) ?? '{}').session).toBe('A')
+})
+
+test('власник: назва чату в рядку й у живому тексті — видно, куди піде команда', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'B', {
+    [BUS]: bus(T0, 5, []),
+    [OWNER]: JSON.stringify({ session: 'A', at: T0 }),
+    [`${HOME}\\alive-A.json`]: JSON.stringify({ at: T0, ref: 'aaaaaa', title: 'Тест' }),
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, JSON.stringify({ at: T0 + 500, state: 'armed', msg: 'перезапусти сервер', seq: 5, events: [] }))
+  w.fs.set(OWNER, JSON.stringify({ session: 'A', at: T0 + 500 }))
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ text: /Голос → «Тест»/ })).toBeDefined()
+  expect(await ui.find({ text: /🎙 → «Тест»: перезапусти сервер/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('перемикання: сповіщення з причиною — і там, куди пішов голос, і там, звідки', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', {
+    [BUS]: bus(T0, 1, []),
+    [`${HOME}\\alive-B.json`]: JSON.stringify({ at: T0, ref: 'b48a00', title: 'Запуск бота' }),
+  })
+  await $.session.start(START)
+  await w.clock.advance(500) // перша сесія взяла голос — це не перемикання, мовчимо
+  expect(w.toasts).toEqual([])
+
+  // Людина написала в чаті B (Авто) — голос пішов туди.
+  w.fs.set(OWNER, JSON.stringify({ session: 'B', at: T0 + 500, locked: false, why: 'typed' }))
+  await w.clock.advance(500)
+  expect(w.toasts.at(-1)).toBe('Голос → «Запуск бота» — ви написали там')
+  const history = await $.ui.mount(PANE)
+  expect(await history.find({ text: /Голос → «Запуск бота» — ви написали там/ })).toBeDefined()
+  await history.unmount()
+
+  // Повернули кнопкою «Сюди».
+  const band = await $.ui.mount(BAND)
+  await band.press({ key: 'here' })
+  await band.unmount()
+  await w.clock.advance(500)
+  expect(w.toasts.at(-1)).toBe('Голос тепер тут — перемкнуто кнопкою')
+
+  // Режим: «Закріплено» — тост про сам режим.
+  const again = await $.ui.mount(BAND)
+  await again.press({ key: 'lock' })
+  await again.unmount()
+  expect(w.toasts.at(-1)).toBe('Голос закріплено за цим чатом')
+  expect(JSON.parse(w.fs.get(OWNER) ?? '{}')).toMatchObject({ session: 'A', locked: true, why: 'button' })
+
+  // Чат, що слухав, закрито — голос ні в якому чаті.
+  w.fs.set(OWNER, JSON.stringify({ session: 'B', at: T0 - 60_000, locked: false, why: 'typed' }))
+  await w.clock.advance(500)
+  expect(w.toasts.at(-1)).toMatch(/^Голос ні в якому чаті/)
 })
 
 test('мертвий слухач: сесія піднімає новий', async ($, on) => {

@@ -69,6 +69,7 @@ const SPAWN_GAP_MS = 15_000 // модель вантажиться секунд�
 const ALIVE_BEAT_MS = 5000 // пульс сесії для слухача: без жодного 2 хв — він виходить
 const ALIVE_FRESH_MS = 15_000 // чат, що стільки не писав пульсу, у зміну чату не потрапляє
 const REF_RETRY_MS = 60_000 // свій ref з ListAgents — повтор, якщо не вийшло
+const TITLE_REFRESH_MS = 120_000 // назву чату людина могла змінити, а застосунок — дати сам
 const PENDING_COMMAND_MS = 30_000 // команду без відповіді — скасувати
 const PENDING_ACTION_MS = 120_000
 const CARD_SETTLE_MS = 1500 // свіжу картку кнопкою не підтвердити
@@ -85,6 +86,8 @@ const log = atom({ plugin: 'voice-mod', key: 'log' } as const, [])
 const muted = atom({ plugin: 'voice-mod', key: 'muted' } as const, false)
 const owner = atom({ plugin: 'voice-mod', key: 'owner' } as const, 'none')
 const locked = atom({ plugin: 'voice-mod', key: 'locked' } as const, false)
+// Назва чату, що зараз слухає (коли це інший чат) — з його alive-файлу; null — невідома.
+const ownerTitle = atom({ plugin: 'voice-mod', key: 'ownerTitle' } as const, null)
 // Гвард дій увімкнено: ходом заправляв голос, і людина відтоді нічого не набирала.
 const guarded = atom({ plugin: 'voice-mod', key: 'guarded' } as const, false)
 const pending = atom({ plugin: 'voice-mod', key: 'pending' } as const, null)
@@ -187,7 +190,11 @@ export type Bus = {
 // handoff — команда, передана зміною чату новому власнику; seq — подія bus.json,
 // з якої її взято (новий власник цю подію сам не обробляє).
 type Handoff = { id: string; seq: number; text: string }
-type Owner = { session: string | null; at: number; locked: boolean; handoff: Handoff | null }
+// why — чому голос тут: людина написала в цьому чаті, натиснула «Сюди», сказала «зміна
+// чату» чи це перша сесія; інші чати показують цю причину в сповіщенні про перемикання.
+export type Why = 'typed' | 'button' | 'voice' | 'first'
+type Owner = { session: string | null; at: number; locked: boolean; handoff: Handoff | null; why: Why | null }
+const WHYS = new Set<string>(['typed', 'button', 'voice', 'first'])
 
 /** bus.json → дані або null (нема файлу, пишеться саме зараз, битий). */
 export function parseBus(text: string): Bus | null {
@@ -256,7 +263,11 @@ const approvals = new Map<string, number>() // ключ виклику → ко�
 // тік — відправка нового промпту зсередини того самого хука губиться.
 let typedAnswer: 'yes' | 'no' | null = null
 let myRef: string | null = null // як ListAgents називає цей чат («[e4001a]»)
+let myTitle: string | null = null // назва цього чату в бічній панелі — для інших чатів
 let lastRefAt = 0
+// Власник, якого цей чат бачив на минулому тіку: зміна → сповіщення з причиною.
+// undefined — ще не дивились (старт і перезавантаження мода не сповіщають).
+let seenOwner: string | null | undefined
 let lastHandoff = '' // id останньої забраної передачі
 type Queued = { text: string; seq: number; isHandoff: boolean }
 
@@ -297,17 +308,13 @@ async function readOwner($: EngineInterface, p: Paths): Promise<Owner | null> {
         h && typeof h.id === 'string' && typeof h.seq === 'number' && typeof h.text === 'string'
           ? { id: h.id, seq: h.seq, text: h.text }
           : null,
+      why: typeof v.why === 'string' && WHYS.has(v.why) ? (v.why as Why) : null,
     }
   } catch {
     return null
   }
 }
 
-/**
- * Стати власником. `auto` — неявне (відправили повідомлення, перша сесія): чужий
- * закріплений власник не перехоплюється. `explicit` — «Слухати тут» / /voice-here:
- * бере завжди, а чуже закріплення знімає. Своє закріплення лишається.
- */
 /**
  * Кожне «прочитати → записати» owner.json у цій сесії — по черзі: інакше пульс,
  * claim і зміна чату, що йдуть паралельно (тік і черга команд), перетирають одне
@@ -319,7 +326,13 @@ function withOwner<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-function claim($: EngineInterface, how: 'auto' | 'explicit'): Promise<void> {
+/**
+ * Стати власником. `auto` — неявне (відправили повідомлення, перша сесія): чужий
+ * закріплений власник не перехоплюється. `explicit` — «Сюди» / /voice-here: бере
+ * завжди, а чуже закріплення знімає. Своє закріплення лишається. `why` — причина для
+ * сповіщень; голос, що вже тут, причини не міняє (пульс від набраного не «перемикання»).
+ */
+function claim($: EngineInterface, how: 'auto' | 'explicit', why: Why): Promise<void> {
   return withOwner(async () => {
     const p = await paths($)
     const now = await $.clock.now()
@@ -329,7 +342,8 @@ function claim($: EngineInterface, how: 'auto' | 'explicit'): Promise<void> {
     const isLocked = isMine && o?.locked === true
     // Свою ще не забрану передачу не губимо.
     const handoff = isMine ? (o?.handoff ?? null) : null
-    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: isLocked, handoff }))
+    const reason = isMine && ownerOf(o, mySession, now) === 'me' ? (o?.why ?? why) : why
+    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: isLocked, handoff, why: reason }))
     lastOwnerBeat = now
     await update($, owner, () => 'me')
     await update($, locked, () => isLocked)
@@ -343,7 +357,7 @@ function setLocked($: EngineInterface, value: boolean): Promise<boolean | null> 
     const now = await $.clock.now()
     const o = await readOwner($, p)
     if (ownerOf(o, mySession, now) !== 'me') return null
-    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: value, handoff: o?.handoff ?? null }))
+    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: value, handoff: o?.handoff ?? null, why: o?.why ?? null }))
     lastOwnerBeat = now
     await update($, locked, () => value)
     return value
@@ -366,7 +380,7 @@ function ownerBeat($: EngineInterface, now: number): Promise<void> {
     const p = await paths($)
     const fresh = await readOwner($, p)
     if (fresh?.session !== mySession) return
-    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: fresh.locked, handoff: fresh.handoff }))
+    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: fresh.locked, handoff: fresh.handoff, why: fresh.why }))
     lastOwnerBeat = now
   })
 }
@@ -382,7 +396,7 @@ function takeHandoff($: EngineInterface, t: Strings, now: number): Promise<void>
     skipSeq = hand.seq
     if (hand.text) queue.push({ text: hand.text, seq: -1, isHandoff: true })
     await note($, t.noteChatArrived(hand.text))
-    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: fresh?.locked === true }))
+    await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: fresh?.locked === true, why: fresh?.why ?? 'voice' }))
     lastOwnerBeat = now
   })
 }
@@ -399,8 +413,34 @@ async function listAgents($: EngineInterface): Promise<Listing | null> {
   }
 }
 
-async function refreshRef($: EngineInterface): Promise<void> {
-  myRef = (await listAgents($))?.self?.ref ?? null
+/** Свій ref і назва з ListAgents: ref — щоб зміна чату знайшла цей чат, назва — щоб інші показали її. */
+async function refreshSelf($: EngineInterface): Promise<void> {
+  const self = (await listAgents($))?.self
+  if (!self) return
+  myRef = self.ref
+  myTitle = self.title
+}
+
+/** Назва чату-сесії з її alive-файлу; null — файлу нема чи назви ще не дізнались. */
+async function titleOf($: EngineInterface, session: string): Promise<string | null> {
+  try {
+    const v = JSON.parse((await readJson($, `${(await paths($)).home}\\alive-${session}.json`)) ?? '{}') as { title?: unknown }
+    return typeof v.title === 'string' && v.title.trim() ? v.title.trim() : null
+  } catch {
+    return null
+  }
+}
+
+/** Власник змінився — сповістити в цьому чаті, куди пішов голос і чому. */
+async function announceOwner($: EngineInterface, t: Strings, cur: string | null, why: Why | null): Promise<void> {
+  const text =
+    cur === null
+      ? t.switchNone
+      : cur === mySession
+        ? t.switchHere(why ?? '')
+        : t.switchThere((await titleOf($, cur)) ?? t.otherChat, why ?? '')
+  await note($, text)
+  $.ui.toast(text)
 }
 
 /** Чати, куди можна передати голос: цей і ті, де мод живий і його ref відомий. */
@@ -451,13 +491,12 @@ async function switchChat($: EngineInterface, t: Strings, rest: string, seq: num
     // Поки питали ListAgents, голос могли забрати — тоді чужим замком не розпоряджаємось.
     if (ownerOf(o, mySession, now) !== 'me') return false
     const handoff: Handoff = { id: `${mySession}:${now}`, seq, text }
-    await $.fs.write(p.owner, JSON.stringify({ session: chat.id, at: now, locked: o?.locked === true, handoff }))
+    await $.fs.write(p.owner, JSON.stringify({ session: chat.id, at: now, locked: o?.locked === true, handoff, why: 'voice' }))
     return true
   })
   if (!isSent) return fail(t.chatLost)
   await update($, owner, () => 'other')
-  await note($, t.noteChatSwitched(chat.title, text))
-  $.ui.toast(t.toastChatSwitched(chat.title))
+  await note($, t.noteChatSwitched(chat.title, text)) // саме перемикання сповістить тік
 }
 
 type Control = { muted?: boolean; safeMode?: boolean; restart?: number } & Partial<VoiceSettings>
@@ -556,11 +595,11 @@ async function tick($: EngineInterface): Promise<void> {
 
   if (now - lastAliveBeat > ALIVE_BEAT_MS) {
     lastAliveBeat = now
-    await $.fs.write(`${p.home}\\alive-${mySession}.json`, JSON.stringify({ at: now, ref: myRef }))
+    await $.fs.write(`${p.home}\\alive-${mySession}.json`, JSON.stringify({ at: now, ref: myRef, title: myTitle }))
   }
-  if (!myRef && now - lastRefAt > REF_RETRY_MS) {
+  if (now - lastRefAt > (myRef ? TITLE_REFRESH_MS : REF_RETRY_MS)) {
     lastRefAt = now
-    void refreshRef($).catch(() => {})
+    void refreshSelf($).catch(() => {})
   }
 
   let control: Control = {}
@@ -610,7 +649,7 @@ async function tick($: EngineInterface): Promise<void> {
   let who = ownerOf(o, mySession, now)
   if (who === 'none' && o === null) {
     // Жодна сесія ще не брала мікрофон — перша, хто його бачить, і бере.
-    await claim($, 'auto')
+    await claim($, 'auto', 'first')
     who = 'me'
   } else if (who === 'me' && o?.handoff && o.handoff.id !== lastHandoff) {
     await takeHandoff($, t, now)
@@ -618,6 +657,11 @@ async function tick($: EngineInterface): Promise<void> {
     await ownerBeat($, now)
   }
   if ((await read($, owner)) !== who) await update($, owner, () => who)
+  const nowOwner = who === 'me' ? mySession : who === 'other' ? (o?.session ?? null) : null
+  if (seenOwner !== undefined && nowOwner !== seenOwner) await announceOwner($, t, nowOwner, o?.why ?? null)
+  seenOwner = nowOwner
+  const title = who === 'other' && o?.session ? await titleOf($, o.session) : null
+  if ((await read($, ownerTitle)) !== title) await update($, ownerTitle, () => title)
   const isLocked = isLockedOf(o, now)
   if ((await read($, locked)) !== isLocked) await update($, locked, () => isLocked)
 
@@ -631,7 +675,7 @@ async function tick($: EngineInterface): Promise<void> {
   const cur = await read($, status)
   if (cur.state !== next.state || cur.msg !== next.msg) await update($, status, () => next)
   // Рядок стану застосунку оновлюємо і при зміні мови, а не лише стану.
-  const line = `${ICON[next.state]} ${t.statusLine(shortOf(t, next.state))}${who === 'other' ? t.otherSessionSuffix : ''}${isLocked ? t.lockedSuffix : ''}`
+  const line = `${ICON[next.state]} ${t.statusLine(shortOf(t, next.state))}${who === 'other' ? t.otherSessionSuffix(title ?? t.otherChat) : ''}${isLocked ? t.lockedSuffix : ''}`
   if (line !== statusKey) {
     statusKey = line
     $.ui.status(line)
@@ -1015,7 +1059,7 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     const isHuman = HUMAN.has(e.origin.kind)
     void boot($)
-      .then(() => (isHuman ? claim($, 'auto') : undefined))
+      .then(() => (isHuman ? claim($, 'auto', 'typed') : undefined))
       .catch(() => {})
     // Набране людиною «так»/«ні», поки картка чекає, — це відповідь на неї,
     // а не повідомлення агенту. Текст — дозволений шлях і в безпечному режимі.
@@ -1108,7 +1152,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'voice-here' }, async $ => {
     await boot($)
-    await claim($, 'explicit')
+    await claim($, 'explicit', 'button')
     return { text: (await strings($)).resHere }
   })
 
@@ -1160,6 +1204,7 @@ export const register: Register = on => {
     const isMuted = await read($, muted)
     const who = await read($, owner)
     const isLocked = await read($, locked)
+    const otherTitle = await read($, ownerTitle)
     const wait = await read($, pending)
     const isSafe = await read($, safeMode)
     const isHistory = await read($, historyOpen)
@@ -1186,20 +1231,23 @@ export const register: Register = on => {
     // Кнопка = гліф; її підпис — підказка, що виринає в рядку при наведенні
     // (hover-група `scope`): нативного тултипа в кнопки API модів не має.
     const tools: { key: string; glyph: string; hint: string; press: () => unknown; primary?: boolean }[] = [
-      // Не власник — 🎧 «Слухати тут»; власник — замочок закріплення.
+      // Не власник — 🎧 «Сюди»; власник — режим: «Авто» (за чатом, де пишуть) чи «Закріплено».
       who !== 'me'
         ? {
             key: 'here',
             glyph: '🎧',
-            hint: isLocked ? t.hintHereLocked : t.hintHere,
-            press: () => claim($, 'explicit'),
+            hint: isLocked ? t.hintHereLocked(otherTitle ?? t.otherChat) : t.hintHere,
+            press: () => claim($, 'explicit', 'button'),
             primary: true,
           }
         : {
             key: 'lock',
-            glyph: isLocked ? '🔒' : '🔓',
-            hint: isLocked ? t.hintUnlock : t.hintLock,
-            press: () => setLocked($, !isLocked),
+            glyph: isLocked ? t.modePinned : t.modeAuto,
+            hint: isLocked ? t.hintModePinned : t.hintModeAuto,
+            press: async () => {
+              const done = await setLocked($, !isLocked)
+              if (done !== null) $.ui.toast(done ? t.toastPinned : t.toastAuto)
+            },
           },
       {
         key: 'mute',
@@ -1236,14 +1284,16 @@ export const register: Register = on => {
             dimColor={who !== 'other'}
             wrap="truncate-end"
           >
-            {who === 'me' ? t.ownerMe : who === 'other' ? t.ownerOther : t.ownerNone}
+            {who === 'me' ? t.ownerMe : who === 'other' ? t.ownerOther(otherTitle ?? t.otherChat) : t.ownerNone}
             {who === 'other' && isLocked ? t.lockedSuffix : ''}
           </Text>
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
             {msg && (s.state === 'armed' || s.state === 'transcribing') ? (
               // Живий текст команди, яку зараз диктують, — поки вона не пішла.
-              <Text key="heard" size="footnote" color="suggestion" wrap="truncate-start">
-                🎙 {msg}
+              // Не в цьому чаті — з ціллю: куди піде команда, видно ще до відправки.
+              <Text key="heard" size="footnote" color={who === 'me' ? 'suggestion' : 'warning'} wrap="truncate-start">
+                🎙 {who === 'me' ? '' : who === 'other' ? t.liveTo(otherTitle ?? t.otherChat) : t.liveNowhere}
+                {msg}
               </Text>
             ) : msg || !heard ? (
               <Text key="heard" size="footnote" dimColor wrap="truncate-end">

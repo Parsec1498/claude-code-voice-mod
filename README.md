@@ -14,8 +14,10 @@ sent to the chat as your prompt, marked 🎙. Speech is recognized **locally** b
   actions in a voice-started turn (deletions, irreversible git, sending data out, changes to
   settings or autostart, background and scheduled tasks) stop until you confirm with a button
   or by typing. In safe mode (default) voice cannot confirm them.
-- **Chat routing**: commands go to the chat you last wrote in; 🔒 pins voice to one chat;
-  «Switch chat <name>, <command>» sends a command to another chat (experimental).
+- **Chat routing**: the status row names the chat that listens («Voice → «Bot»»), and so does
+  the live transcript, before the command is sent. Mode **Auto** — voice follows the chat you
+  write in; **Pinned** — it stays put. Switch by 🎧 «Here», or say «Switch chat <name>,
+  <command>» (experimental). Every switch shows a notice with its reason.
 - **Terminology**: hotwords for the recognizer, a corrections glossary editable in the
   settings, an Opus agent that proposes terms for your project, and agents that add a rule
   when they see a project term was misrecognized.
@@ -56,8 +58,8 @@ Switch to English in ⚙ → Language (the default is Ukrainian).
 | 🎤 / 🔇 | microphone; off — the listener stops and frees memory |
 | ⚙ | settings |
 | 🕘 | history: what the recognizer heard and what was sent |
-| 🎧 | listen in this chat |
-| 🔓 / 🔒 | pin voice to this chat: messages in other chats do not take it |
+| 🎧 | «Here»: move voice to this chat (shown in chats that are not listening) |
+| 🔓 Auto / 🔒 Pinned | mode, in the listening chat: Auto — voice follows the chat you write in; Pinned — it stays here until 🎧 or a voice command |
 
 Commands: `/voice-panel`, `/voice-here`, `/voice-lock`, `/voice-mute`, `/voice-confirm`,
 `/voice-cancel`, `/voice-safe`.

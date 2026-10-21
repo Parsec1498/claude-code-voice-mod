@@ -79,6 +79,8 @@ declare module 'claude-code' {
       owner: VoiceOwner
       /** Власника закріплено (🔒): відправка в інших чатах його не перехоплює. */
       locked: boolean
+      /** Назва чату, що слухає (коли це інший чат); null — невідома. */
+      ownerTitle: string | null
       /** Гвард дій увімкнено: хід запустив голос, і людина відтоді нічого не набирала. */
       guarded: boolean
       pending: VoicePending | null

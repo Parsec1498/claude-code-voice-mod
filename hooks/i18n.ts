@@ -58,7 +58,7 @@ export type Strings = {
   stateError: string
   // рядок стану в застосунку й повідомлення мода про слухача
   statusLine: (state: string) => string
-  otherSessionSuffix: string
+  otherSessionSuffix: (title: string) => string
   lockedSuffix: string
   starting: string
   notResponding: string
@@ -66,14 +66,24 @@ export type Strings = {
   noPython: (path: string) => string
   // рядок над полем вводу
   ownerMe: string
-  ownerOther: string
+  ownerOther: (title: string) => string
   ownerNone: string
+  otherChat: string
+  liveTo: (title: string) => string
+  liveNowhere: string
+  switchHere: (why: string) => string
+  switchThere: (title: string, why: string) => string
+  switchNone: string
   sayWake: (word: string) => string
   seconds: string
   hintHere: string
-  hintLock: string
-  hintUnlock: string
-  hintHereLocked: string
+  hintHereLocked: (title: string) => string
+  modeAuto: string
+  modePinned: string
+  hintModeAuto: string
+  hintModePinned: string
+  toastAuto: string
+  toastPinned: string
   hintMuteOn: string
   hintMuteOff: string
   hintSettingsShow: string
@@ -114,7 +124,6 @@ export type Strings = {
   chatAmbiguous: (titles: string) => string
   noteChatHere: (title: string) => string
   noteChatSwitched: (title: string, text: string) => string
-  toastChatSwitched: (title: string) => string
   noteChatArrived: (text: string) => string
   toastBlocked: (why: string) => string
   heardSuffix: (raw: string) => string
@@ -250,21 +259,33 @@ const uk: Strings = {
   stateMuted: 'Mic off',
   stateError: 'Помилка',
   statusLine: state => `Голос: ${state}`,
-  otherSessionSuffix: ' (інша сесія)',
+  otherSessionSuffix: title => ` → «${title}»`,
   lockedSuffix: ' 🔒',
   starting: 'запускаю…',
   notResponding: 'слухач не відповідає — перезапускаю',
   restarting: 'перезапуск…',
   noPython: path => `нема ${path}`,
-  ownerMe: 'Активна сесія',
-  ownerOther: 'Інша сесія',
-  ownerNone: 'Нема сесії',
+  ownerMe: 'Голос тут',
+  ownerOther: title => `Голос → «${title}»`,
+  ownerNone: 'Голос ні в якому чаті',
+  otherChat: 'інший чат',
+  liveTo: title => `→ «${title}»: `,
+  liveNowhere: '(нікуди не піде — натисніть 🎧) ',
+  switchHere: why =>
+    `Голос тепер тут — ${{ typed: 'ви написали в цьому чаті', button: 'перемкнуто кнопкою', voice: 'голосова команда', first: 'перший чат' }[why] ?? 'перемкнуто'}`,
+  switchThere: (title, why) =>
+    `Голос → «${title}» — ${{ typed: 'ви написали там', button: 'перемкнуто кнопкою', voice: 'голосова команда', first: 'перший чат' }[why] ?? 'перемкнуто'}`,
+  switchNone: 'Голос ні в якому чаті: чат, що слухав, закрито — напишіть у потрібному чи натисніть 🎧',
   sayWake: word => `Скажіть «${word}, …»`,
   seconds: 'с',
-  hintHere: 'Слухати в цій сесії',
-  hintLock: 'Закріпити голос за цим чатом: відправка в інших чатах його не перехоплює',
-  hintUnlock: 'Зняти закріплення: голос знову йде за чатом, де писали востаннє',
-  hintHereLocked: 'Слухати в цій сесії (голос закріплено за іншим чатом — закріплення зніметься)',
+  hintHere: 'Сюди: голос слухатиме цей чат',
+  hintHereLocked: title => `Сюди: голос слухатиме цей чат (закріплення з «${title}» зніметься)`,
+  modeAuto: '🔓 Авто',
+  modePinned: '🔒 Закріплено',
+  hintModeAuto: 'Авто: голос іде за чатом, де ви пишете. Натисніть — закріпити тут',
+  hintModePinned: 'Закріплено: голос тут, хоч би де ви писали; перемкнути — 🎧 в іншому чаті чи голосом. Натисніть — Авто',
+  toastAuto: 'Авто: голос іде за чатом, де ви пишете',
+  toastPinned: 'Голос закріплено за цим чатом',
   hintMuteOn: 'Увімкнути мікрофон',
   hintMuteOff: 'Вимкнути мікрофон',
   hintSettingsShow: 'Налаштування',
@@ -302,7 +323,6 @@ const uk: Strings = {
   chatAmbiguous: titles => `Зміна чату: схожі кілька — ${titles}; скажіть точніше`,
   noteChatHere: title => `→ чат «${title}» — це він і є`,
   noteChatSwitched: (title, text) => `→ голос у чаті «${title}»${text ? `: ${text}` : ''}`,
-  toastChatSwitched: title => `Голос → «${title}»`,
   noteChatArrived: text => `← голос передано сюди${text ? `: ${text}` : ''}`,
   toastBlocked: why => `Голос: зупинено «${why}» — потрібне підтвердження`,
   heardSuffix: raw => `(розпізнано: «${raw}»)`,
@@ -317,7 +337,7 @@ const uk: Strings = {
   dropAnswer: 'відповідь на картку підтвердження голосового мода',
   cmdPanel: 'Голосові команди: історія почутого',
   cmdHere: 'Голосові команди: слухати в цій сесії',
-  cmdLock: 'Голосові команди: закріпити за цим чатом / зняти закріплення',
+  cmdLock: 'Голосові команди: режим «Закріплено» / «Авто»',
   cmdMute: 'Голосові команди: вимкнути / увімкнути мікрофон',
   cmdConfirm: 'Голосові команди: підтвердити, що чекає на картці',
   cmdCancel: 'Голосові команди: скасувати, що чекає на картці',
@@ -460,21 +480,33 @@ const en: Strings = {
   stateMuted: 'Mic off',
   stateError: 'Error',
   statusLine: state => `Voice: ${state}`,
-  otherSessionSuffix: ' (other session)',
+  otherSessionSuffix: title => ` → «${title}»`,
   lockedSuffix: ' 🔒',
   starting: 'starting…',
   notResponding: 'listener not responding — restarting',
   restarting: 'restarting…',
   noPython: path => `not found: ${path}`,
-  ownerMe: 'Active session',
-  ownerOther: 'Other session',
-  ownerNone: 'No session',
+  ownerMe: 'Voice here',
+  ownerOther: title => `Voice → «${title}»`,
+  ownerNone: 'Voice in no chat',
+  otherChat: 'another chat',
+  liveTo: title => `→ «${title}»: `,
+  liveNowhere: '(goes nowhere — press 🎧) ',
+  switchHere: why =>
+    `Voice is here now — ${{ typed: 'you wrote in this chat', button: 'switched by button', voice: 'voice command', first: 'first chat' }[why] ?? 'switched'}`,
+  switchThere: (title, why) =>
+    `Voice → «${title}» — ${{ typed: 'you wrote there', button: 'switched by button', voice: 'voice command', first: 'first chat' }[why] ?? 'switched'}`,
+  switchNone: 'Voice is in no chat: the listening chat was closed — write in the one you need or press 🎧',
   sayWake: word => `Say «${word}, …»`,
   seconds: 's',
-  hintHere: 'Listen in this session',
-  hintLock: 'Pin voice to this chat: sending in other chats will not take it',
-  hintUnlock: 'Unpin: voice follows the chat you last wrote in',
-  hintHereLocked: 'Listen in this session (voice is pinned to another chat — this unpins it)',
+  hintHere: 'Here: voice will listen to this chat',
+  hintHereLocked: title => `Here: voice will listen to this chat (unpins it from «${title}»)`,
+  modeAuto: '🔓 Auto',
+  modePinned: '🔒 Pinned',
+  hintModeAuto: 'Auto: voice follows the chat you write in. Press to pin it here',
+  hintModePinned: 'Pinned: voice stays here wherever you write; switch with 🎧 in another chat or by voice. Press for Auto',
+  toastAuto: 'Auto: voice follows the chat you write in',
+  toastPinned: 'Voice pinned to this chat',
   hintMuteOn: 'Unmute the microphone',
   hintMuteOff: 'Mute the microphone',
   hintSettingsShow: 'Settings',
@@ -512,7 +544,6 @@ const en: Strings = {
   chatAmbiguous: titles => `Switch chat: several match — ${titles}; be more specific`,
   noteChatHere: title => `→ chat «${title}» — already here`,
   noteChatSwitched: (title, text) => `→ voice in chat «${title}»${text ? `: ${text}` : ''}`,
-  toastChatSwitched: title => `Voice → «${title}»`,
   noteChatArrived: text => `← voice handed over here${text ? `: ${text}` : ''}`,
   toastBlocked: why => `Voice: stopped "${why}" — confirmation needed`,
   heardSuffix: raw => `(heard: «${raw}»)`,
@@ -527,7 +558,7 @@ const en: Strings = {
   dropAnswer: "an answer to the voice mod's confirmation card",
   cmdPanel: 'Voice commands: history of what was heard',
   cmdHere: 'Voice commands: listen in this session',
-  cmdLock: 'Voice commands: pin to this chat / unpin',
+  cmdLock: 'Voice commands: "Pinned" / "Auto" mode',
   cmdMute: 'Voice commands: mute / unmute the microphone',
   cmdConfirm: 'Voice commands: confirm what the card is waiting for',
   cmdCancel: 'Voice commands: cancel what the card is waiting for',
