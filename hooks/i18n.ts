@@ -11,9 +11,9 @@ export function langOf(v: unknown): Lang {
 
 // Типові слова за мовою: порожнє поле в ⚙ означає саме їх. uk збігається з типовими
 // слухача (--wake / --stop), en — з тим, що слухач бере для `language: en`.
-export const DEFAULT_WORDS: Record<Lang, { wake: string; stop: string; chat: string }> = {
-  uk: { wake: 'Клоде, Клод, Клауд, Claude', stop: 'Роби', chat: 'Зміна чату' },
-  en: { wake: 'Claude', stop: 'Done', chat: 'Switch chat' },
+export const DEFAULT_WORDS: Record<Lang, { wake: string; stop: string; cancel: string; chat: string }> = {
+  uk: { wake: 'Клоде, Клод, Клауд, Claude', stop: 'Роби', cancel: 'Відміна', chat: 'Зміна чату' },
+  en: { wake: 'Claude', stop: 'Done', cancel: 'Cancel', chat: 'Switch chat' },
 }
 
 // Причини ризику, які повертають safety.ts (шари слів і дій) і мод. Самі причини
@@ -179,6 +179,9 @@ export type Strings = {
   wakeHint: string
   setStop: string
   stopHint: (stop: string) => string
+  setCancel: string
+  cancelHint: (cancel: string) => string
+  cancelledLine: (text: string) => string
   setChat: string
   chatHint: (wake: string, phrase: string) => string
   setPrompt: string
@@ -379,9 +382,13 @@ const uk: Strings = {
   autoOffHint: stop => `Запис триває навіть у тиші, доки не скажете «${stop}» (до 5 хв).`,
   setWake: 'Слово-активатор',
   wakeHint: 'Кілька варіантів — через кому; порожньо — типове для мови.',
+  setCancel: 'Слово скасування',
   setStop: 'Стоп-слово',
   stopHint: stop =>
     `Відправляє команду, коли автозавершення вимкнено: скажіть «${stop}». Порожньо — типове для мови.`,
+  cancelHint: cancel =>
+    `Скасовує команду: скажіть «${cancel}» в її кінці — і нічого не піде в чат (діє в обох режимах). Кілька слів — через кому. Порожньо — типове для мови.`,
+  cancelledLine: text => (text ? `✗ скасовано: ${text}` : '✗ скасовано'),
   setChat: 'Зміна чату (експериментально)',
   chatHint: (wake, phrase) =>
     `«${wake}, ${phrase} <назва чату>, <команда>» — команда піде в той чат (назва як у бічній панелі; довгу можна почати). ` +
@@ -601,9 +608,13 @@ const en: Strings = {
   autoOffHint: stop => `Recording goes on even in silence until you say «${stop}» (up to 5 min).`,
   setWake: 'Wake word',
   wakeHint: 'Several variants, comma-separated; empty — the default for the language.',
+  setCancel: 'Cancel word',
   setStop: 'Stop word',
   stopHint: stop =>
     `Sends the command when auto-end is off: say «${stop}». Empty — the default for the language.`,
+  cancelHint: cancel =>
+    `Cancels the command: say «${cancel}» at its end and nothing goes to the chat (works in both modes). Several words — separated by commas. Empty — the default for the language.`,
+  cancelledLine: text => (text ? `✗ cancelled: ${text}` : '✗ cancelled'),
   setChat: 'Switch chat (experimental)',
   chatHint: (wake, phrase) =>
     `«${wake}, ${phrase} <chat name>, <command>» — the command goes to that chat (name as in the sidebar; a long one can be started). ` +

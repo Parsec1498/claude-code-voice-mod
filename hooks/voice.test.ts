@@ -582,6 +582,104 @@ test('проміжні фрази диктовки — лише в історі�
   await band.unmount()
 })
 
+test('«скасовано»: у чат нічого не йде, історія й рядок показують ✗', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 3, [
+    { seq: 2, kind: 'part', text: 'запусти бота' },
+    { seq: 3, kind: 'cancelled', text: 'запусти бота' },
+  ]))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual([])
+  expect(w.calls).toHaveLength(0) // скасоване навіть не чистимо моделлю
+  const band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /✗ скасовано: запусти бота/ })).toBeDefined()
+  expect(await band.find({ text: /✓/ })).toBeUndefined()
+  await band.press({ key: 'history' })
+  const pane = await $.ui.mount(PANE)
+  expect(await pane.find({ text: /✗ скасовано: запусти бота/ })).toBeDefined()
+  await pane.unmount()
+  await band.unmount()
+})
+
+test('«скасовано» англійською: ✗ cancelled', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: '{"language":"en"}' })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'cancelled', text: 'start the bot' }]))
+  await w.clock.advance(500)
+  const band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /✗ cancelled: start the bot/ })).toBeDefined()
+  await band.unmount()
+})
+
+test('«скасовано» без тексту відхиляє висячу картку; без картки — лише запис в історії', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) }, {
+    'видали все': { clean: 'Видали все.', risk: 'confirm', reason: 'видалення' },
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'видали все' }]))
+  await w.clock.advance(500)
+  let band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /Підтвердіть команду: Видали все/ })).toBeDefined()
+  await band.unmount()
+
+  w.fs.set(BUS, bus(T0 + 1000, 3, [{ seq: 3, kind: 'cancelled', text: '' }]))
+  await w.clock.advance(500)
+  band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /Підтвердіть команду/ })).toBeUndefined() // картку відхилено
+  expect(await band.find({ text: /✗ скасовано/ })).toBeDefined()
+  await band.unmount()
+  expect(w.submitted).toEqual([])
+
+  // Без картки — нічого не відхиляємо й нічого не відправляємо.
+  w.fs.set(BUS, bus(T0 + 1500, 4, [{ seq: 4, kind: 'cancelled', text: '' }]))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual([])
+})
+
+test('«скасовано» з текстом картку не чіпає: скасовано диктовку, а не відповідь на картку', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) }, {
+    'видали все': { clean: 'Видали все.', risk: 'confirm', reason: 'видалення' },
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'видали все' }]))
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 1000, 3, [{ seq: 3, kind: 'cancelled', text: 'запусти бота' }]))
+  await w.clock.advance(500)
+  const band = await $.ui.mount(BAND)
+  expect(await band.find({ text: /Підтвердіть команду: Видали все/ })).toBeDefined()
+  await band.unmount()
+})
+
+test('⚙: слово скасування видно завжди й воно пишеться в control.json; порожнє — ""', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  let ui = await $.ui.mount(SETTINGS)
+  // Діє і з автозавершенням (на відміну від стоп-слова), тож поле є одразу.
+  expect(await ui.find({ key: 'stop' })).toBeUndefined()
+  expect(await ui.find({ key: 'cancel' })).toBeDefined()
+  expect(await ui.find({ key: 'info-cancel' })).toBeDefined()
+  expect(await ui.find({ key: 'cancel' })).toMatchObject({ props: { placeholder: 'Відміна' } })
+  await ui.input({ key: 'cancel', text: ' стоп, скасуй ' })
+  await ui.unmount()
+  expect(JSON.parse(w.fs.get(CONTROL) ?? '{}').cancel).toBe('стоп, скасуй')
+  ui = await $.ui.mount(SETTINGS)
+  await ui.input({ key: 'cancel', text: '' })
+  await ui.unmount()
+  expect(JSON.parse(w.fs.get(CONTROL) ?? '{}').cancel).toBe('')
+})
+
+test('settingsOf: слово скасування — рядок, обрізаний, інакше порожньо', () => {
+  expect(settingsOf({ cancel: ' відміна, скасуй ' }).cancel).toBe('відміна, скасуй')
+  expect(settingsOf({ cancel: 5 } as never).cancel).toBe('')
+  expect(settingsOf({}).cancel).toBe('')
+})
+
 test('пульс сесії і перезапуск через control.json, без вбивства процесу', { timeoutMs: 15000 }, async ($, on) => {
   const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: '{"muted":true}' })
   await $.session.start(START)
@@ -792,8 +890,8 @@ test('i18n: обидві мови мають однакові ключі, жод
   expect(langOf('uk')).toBe('uk')
   expect(langOf(undefined)).toBe('uk')
   expect(langOf('fr')).toBe('uk')
-  expect(DEFAULT_WORDS.uk).toEqual({ wake: 'Клоде, Клод, Клауд, Claude', stop: 'Роби', chat: 'Зміна чату' })
-  expect(DEFAULT_WORDS.en).toEqual({ wake: 'Claude', stop: 'Done', chat: 'Switch chat' })
+  expect(DEFAULT_WORDS.uk).toEqual({ wake: 'Клоде, Клод, Клауд, Claude', stop: 'Роби', cancel: 'Відміна', chat: 'Зміна чату' })
+  expect(DEFAULT_WORDS.en).toEqual({ wake: 'Claude', stop: 'Done', cancel: 'Cancel', chat: 'Switch chat' })
 })
 
 const DEFAULT_SETTINGS = {
@@ -801,6 +899,7 @@ const DEFAULT_SETTINGS = {
   autoEnd: true,
   wake: '',
   stop: '',
+  cancel: '',
   prompt: '',
   hotwords: '',
   language: 'uk',
@@ -1077,7 +1176,7 @@ test('ⓘ: у кожного поля ⚙ є кнопка, а підказка �
   await w.clock.advance(500)
   const ui = await settingsUi(x => $.ui.mount(x))
   const fields = [
-    'language', 'safe', 'beep', 'autoEnd', 'wake', 'stop', 'filterMode', 'filterModel',
+    'language', 'safe', 'beep', 'autoEnd', 'wake', 'stop', 'cancel', 'filterMode', 'filterModel',
     'filterTimeout', 'filterNotes', 'wakeModel', 'model', 'prompt', 'hotwords', 'chat', 'glossary', 'autoTerms', 'filterSystem',
   ]
   for (const f of fields) {

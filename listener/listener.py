@@ -4,6 +4,7 @@
   {"t": "state", "state": "loading|ready|armed|transcribing|muted|error", "msg": ...}
   {"t": "ignored", "text": ...}   мова без слова-активатора (лише перший шматок)
   {"t": "part", "text": ...}      проміжна фраза диктовки (лише в історію)
+  {"t": "cancelled", "text": ...} команду скасовано словом скасування (text — зібране, може бути порожнім)
   {"t": "command", "text": ..., "raw": ..., "ms": ...}
   {"t": "log", "msg": ...}
 
@@ -97,6 +98,8 @@ class Bus:
             self._add("ignored", text=event.get("text"))
         elif kind == "part":
             self._add("part", text=event.get("text"))
+        elif kind == "cancelled":
+            self._add("cancelled", text=event.get("text") or "")
         elif kind == "log":
             self._add("info", text=event.get("msg"))
         self.flush()
@@ -334,11 +337,12 @@ LANG: dict[str, dict[str, str]] = {
     "uk": {
         "wake": "клоде,клод,клауд,claude,лоде,лода,лоді",
         "stop": "роби",
+        "cancel": "відміна",
         "prompt": ("Клоде, відкрий файл, знайди помилку, виправ її і запусти тести. "
                    "Покажи зміни, зроби коміт."),
         "addressee": "Клоде",
         "ready": "скажіть «{wake}, …»",
-        "say_send": "«{stop}» — відправити",
+        "say_send": "«{stop}» — відправити, «{cancel}» — скасувати",
         "no_stop": "не почув «{stop}» за {min} хв — скасовано",
         "on": "на",
         "ready_models": "моделі готові за {sec:.1f} с: {where}",
@@ -365,11 +369,12 @@ LANG: dict[str, dict[str, str]] = {
     "en": {
         "wake": "claude,clod,cloud,clawed",
         "stop": "done",
+        "cancel": "cancel",
         "prompt": ("Claude, open the file, find the bug, fix it and run the tests. "
                    "Show the changes, make a commit."),
         "addressee": "Claude",
         "ready": "say “{wake}, …”",
-        "say_send": "“{stop}” to send",
+        "say_send": "“{stop}” to send, “{cancel}” to cancel",
         "no_stop": "did not hear “{stop}” in {min} min — cancelled",
         "on": "on",
         "ready_models": "models ready in {sec:.1f} s: {where}",
@@ -631,6 +636,7 @@ class Control:
         self.wake = ""         # слова-активатори через кому; порожньо — дефолт слухача
         self.language = "uk"   # uk | en: мова розпізнавання і повідомлень слухача
         self.stop = ""         # стоп-слово(а) для режиму без автозавершення; порожньо — типове мови
+        self.cancel = ""       # слово(а) скасування команди (в обох режимах); порожньо — типове мови
         self.prompt = ""       # своя підказка розпізнавачу; порожньо — загальна
         self.hotwords = ""     # свої слова-підказки; порожньо — загальні
         self.wake_model = ""   # мала модель (активатор); порожньо — типова для пристрою
@@ -654,6 +660,7 @@ class Control:
             auto_end = data.get("autoEnd") is not False
             wake = str(data.get("wake") or "").strip()
             stop = str(data.get("stop") or "").strip()
+            cancel = text_of(data.get("cancel"))
             language = lang_of(data.get("language"))
             prompt = str(data.get("prompt") or "").strip()
             hotwords = str(data.get("hotwords") or "").strip()
@@ -661,10 +668,10 @@ class Control:
             model = text_of(data.get("model"))
         except (OSError, ValueError, TypeError, AttributeError):
             return False
-        new = (beep, auto_end, wake, stop, prompt, hotwords, language, wake_model, model)
-        if new != (self.beep, self.auto_end, self.wake, self.stop, self.prompt,
+        new = (beep, auto_end, wake, stop, cancel, prompt, hotwords, language, wake_model, model)
+        if new != (self.beep, self.auto_end, self.wake, self.stop, self.cancel, self.prompt,
                    self.hotwords, self.language, self.wake_model, self.model):
-            (self.beep, self.auto_end, self.wake, self.stop, self.prompt,
+            (self.beep, self.auto_end, self.wake, self.stop, self.cancel, self.prompt,
              self.hotwords, self.language, self.wake_model, self.model) = new
             self.version += 1
         changed, self.muted = muted != self.muted, muted
@@ -896,11 +903,12 @@ def main() -> int:
 
     # Слова й підказки — з налаштувань (вікно ⚙ мода), перечитуються на льоту.
     words_ver = -1
-    matcher = stopper = None
-    wake_word = stop_word = prompt = hotwords = ""
+    matcher = stopper = canceller = None
+    wake_word = stop_word = cancel_word = prompt = hotwords = ""
 
     def refresh_words():
-        nonlocal words_ver, matcher, stopper, wake_word, stop_word, prompt, hotwords
+        nonlocal words_ver, matcher, stopper, canceller, wake_word, stop_word, cancel_word
+        nonlocal prompt, hotwords
         if words_ver == control.version and matcher is not None:
             return
         words_ver = control.version
@@ -911,6 +919,10 @@ def main() -> int:
         stop_list = [w for w in (control.stop or lg["stop"]).split(",") if w.strip()]
         stopper = WakeMatcher(stop_list, prefix=False)
         stop_word = stop_list[0].strip().capitalize()
+        # Слово скасування — те саме правило хвоста, що й у стоп-слова, окремий matcher.
+        cancel_list = [w for w in (control.cancel or lg["cancel"]).split(",") if w.strip()]
+        canceller = WakeMatcher(cancel_list, prefix=False)
+        cancel_word = cancel_list[0].strip().capitalize()
         prompt = (args.prompt or control.prompt or lg["prompt"]).replace(lg["addressee"], wake_word)
         hotwords = control.hotwords or args.hotwords
         if not control.auto_end:
@@ -980,10 +992,11 @@ def main() -> int:
     early_text = ""
     early_misses = 0
     rejected = False
-    # Стоп-слово діє лише в кінці фрази, тобто після повних 700 мс тиші:
+    # Стоп-слово (і слово скасування) діє лише в кінці фрази, тобто після повних 700 мс тиші:
     # перевірка вже на 160 мс паузи (2026-10-20) обривала команду, щойно
     # слово траплялось ПОСЕРЕД речення, — власник її зняв. Швидким лишився
-    # лише випадок, коли фраза — саме лише стоп-слово: тоді без великої моделі.
+    # лише випадок, коли фраза — саме лише стоп-слово чи слово скасування:
+    # тоді без великої моделі.
     BARE_STOP_MAX_S = 1.5
     # Живий текст: поки звучить фраза-команда, мала модель раз на LIVE_EVERY_S
     # мови переписує її чернетку в рядок (велика — лише на кінці фрази).
@@ -1018,7 +1031,7 @@ def main() -> int:
     def show_live(draft: str = "") -> None:
         done = " ".join(texts or [])
         live = tail(f"{done} {draft}".strip())
-        hint = tr("say_send", stop=stop_word) if texts is not None else None
+        hint = tr("say_send", stop=stop_word, cancel=cancel_word) if texts is not None else None
         state("armed", live or hint or None)
 
     def stop_collect():
@@ -1073,6 +1086,12 @@ def main() -> int:
         else:
             emit(t="ignored", text=raw)
 
+    def cancel_command(text: str, cued: bool = False) -> None:
+        """Скасування: у чат нічого не йде, звучить сигнал кінця, текст зібраного — лише в історію."""
+        if not cued:
+            cue("end")
+        emit(t="cancelled", text=text)
+
     def finish_phrase(audio: np.ndarray, started: float, wake_known: bool, cued: bool = False) -> None:
         """Фраза з активатором (або після голого «Клоде») → команда чи початок диктування."""
         nonlocal armed_until, texts, raws, collect_since
@@ -1084,6 +1103,11 @@ def main() -> int:
             return
         if not hit:
             text = raw
+        # Слово скасування — раніше за стоп-слово: «… роби відміна» = скасування.
+        has_cancel, rest = canceller.split_tail(text)
+        if has_cancel:
+            cancel_command(rest, cued)
+            return
         if not control.auto_end:
             has_stop, rest = stopper.split_tail(text)
             if has_stop:
@@ -1101,26 +1125,37 @@ def main() -> int:
             return
         send(text, raw, started)
 
-    def collect_phrase(audio: np.ndarray, started: float, cued: bool, bare_stop: bool) -> None:
-        """Чергова фраза диктування: велика модель одразу; стоп-слово — відправка."""
+    def collect_phrase(audio: np.ndarray, started: float, bare: str = "") -> None:
+        """Чергова фраза диктування: велика модель одразу; стоп-слово — відправка,
+        слово скасування — відкинути зібране. `bare` — фраза саме лише «stop» чи «cancel»
+        (сигнал уже пролунав)."""
         nonlocal raws
-        if bare_stop:
-            # Фраза — саме лише «Роби»: решту вже розпізнано, велика модель не потрібна.
+        if bare:
+            # Фраза — саме лише «Роби»/«Відміна»: решту вже розпізнано, велика модель не потрібна.
             whole, whole_raw = " ".join(texts or []), " ".join(raws)
             stop_collect()
-            send(whole, whole_raw, started, cued)
+            if bare == "cancel":
+                cancel_command(whole, cued=True)
+            else:
+                send(whole, whole_raw, started, cued=True)
             return
         state("transcribing", tail(" ".join(texts or [])))
         raw = big(audio, " ".join(texts or []))
         raws.append(raw)
         emit(t="part", text=raw)  # проміжна фраза диктовки — в історію
+        has_cancel, rest = canceller.split_tail(raw)
+        if has_cancel:
+            whole = " ".join([*texts, rest] if rest else texts)
+            stop_collect()
+            cancel_command(whole)
+            return
         has_stop, rest = stopper.split_tail(raw)
         if rest:
             texts.append(rest)
         if has_stop:
             whole, whole_raw = " ".join(texts), " ".join(raws)
             stop_collect()
-            send(whole, whole_raw, started, cued)
+            send(whole, whole_raw, started)
         else:
             show_live()
 
@@ -1267,15 +1302,20 @@ def main() -> int:
 
             started = time.time()
             if texts is not None:
-                bare = False
+                bare = ""
                 if len(audio) <= RATE * BARE_STOP_MAX_S:
-                    heard = transcribe(wake_model, audio, beam_size=1, hotwords=stop_word)
-                    has_stop, before = stopper.split_tail(heard)
-                    bare = has_stop and not before.strip(" .,!?")
+                    heard = transcribe(wake_model, audio, beam_size=1,
+                                       hotwords=f"{stop_word} {cancel_word}")
+                    # Скасування перевіряється першим, як і в повній фразі.
+                    for kind, m in (("cancel", canceller), ("stop", stopper)):
+                        has, before = m.split_tail(heard)
+                        if has and not before.strip(" .,!?"):
+                            bare = kind
+                            break
                     if bare:
                         emit(t="part", text=heard)
                         cue("end")
-                collect_phrase(audio, started, bare, bare)
+                collect_phrase(audio, started, bare)
                 continue
             if armed:
                 armed_until = 0.0

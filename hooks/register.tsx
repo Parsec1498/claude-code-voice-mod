@@ -105,6 +105,7 @@ const SETTINGS_DEFAULT: VoiceSettings = {
   autoEnd: true,
   wake: '',
   stop: '', // порожнє = стоп-слово за замовчуванням для мови (DEFAULT_WORDS)
+  cancel: '', // порожнє = слово скасування за замовчуванням для мови
   prompt: '',
   hotwords: '',
   language: 'uk',
@@ -164,7 +165,7 @@ const ICON: Record<VoiceState, string> = {
   error: '🔴',
 }
 
-const KINDS = new Set(['command', 'ignored', 'part', 'info', 'error'])
+const KINDS = new Set(['command', 'ignored', 'part', 'cancelled', 'info', 'error'])
 const STATES = new Set<string>(['off', 'loading', 'ready', 'armed', 'transcribing', 'muted', 'error'])
 
 type Paths = {
@@ -269,7 +270,8 @@ let lastRefAt = 0
 // undefined — ще не дивились (старт і перезавантаження мода не сповіщають).
 let seenOwner: string | null | undefined
 let lastHandoff = '' // id останньої забраної передачі
-type Queued = { text: string; seq: number; isHandoff: boolean }
+// isCancel — слухач скасував порожню команду («Клоде, відміна»): лише відхиляє висячу картку.
+type Queued = { text: string; seq: number; isHandoff: boolean; isCancel?: boolean }
 
 async function paths($: EngineInterface): Promise<Paths> {
   const profile = (await $.env.get('USERPROFILE')) ?? ''
@@ -508,6 +510,7 @@ export function settingsOf(c: Control): VoiceSettings {
     autoEnd: c.autoEnd !== false,
     wake: typeof c.wake === 'string' ? c.wake.trim() : '',
     stop: typeof c.stop === 'string' ? c.stop.trim() : '',
+    cancel: typeof c.cancel === 'string' ? c.cancel.trim() : '',
     prompt: typeof c.prompt === 'string' ? c.prompt.trim() : '',
     hotwords: typeof c.hotwords === 'string' ? c.hotwords.trim() : '',
     language: langOf(c.language),
@@ -690,6 +693,11 @@ async function tick($: EngineInterface): Promise<void> {
     if (ev.kind === 'command' && who === 'me' && typeof ev.text === 'string' && ev.text.trim()) {
       queue.push({ text: ev.text.trim(), seq: ev.seq, isHandoff: false })
     }
+    // Скасовано саме лише словом скасування — це відповідь «ні» на картку, якщо вона висить.
+    // Скасована диктовка (текст є) картки не чіпає: у чат вона не йде, а в історії є ✗.
+    if (ev.kind === 'cancelled' && who === 'me' && typeof ev.text === 'string' && !ev.text.trim()) {
+      queue.push({ text: '', seq: ev.seq, isHandoff: false, isCancel: true })
+    }
   }
   lastSeq = bus.seq // одразу: тік нижче ще чекає, а подія вже в черзі
   if (typedAnswer) {
@@ -777,6 +785,10 @@ async function expirePending($: EngineInterface, now: number): Promise<void> {
 }
 
 async function handleCommand($: EngineInterface, cmd: Queued): Promise<void> {
+  if (cmd.isCancel) {
+    if ((await read($, owner)) === 'me' && (await read($, pending))) await reject($, 'cancelled')
+    return // без картки — лише запис «✗ скасовано» в історії
+  }
   const raw = cmd.text
   const set = await read($, settings)
   const t = STR[set.language]
@@ -1214,7 +1226,7 @@ export const register: Register = on => {
     const wakeWord = firstWord(set.wake, firstWord(DEFAULT_WORDS[set.language].wake, ''))
 
     // У рядку — лише останнє почуте; решта журналу — панеллю за кнопкою 🕘.
-    const heard = [...list].reverse().find(it => it.kind === 'command' || it.kind === 'ignored')
+    const heard = [...list].reverse().find(it => it.kind === 'command' || it.kind === 'ignored' || it.kind === 'cancelled')
     // Повідомлення слухача варте рядка, лише коли пояснює стан («запускаю…», помилка).
     // armed — ще й підказка режиму без автозавершення («Роби» — відправити).
     const msg =
@@ -1305,6 +1317,10 @@ export const register: Register = on => {
                 ✓ {heard.text}
                 {heard.ms !== null ? `  ${(heard.ms / 1000).toFixed(1)} ${t.seconds}` : ''}
               </Text>
+            ) : heard.kind === 'cancelled' ? (
+              <Text key="heard" size="footnote" dimColor wrap="truncate-end">
+                {t.cancelledLine(heard.text)}
+              </Text>
             ) : (
               <Text key="heard" size="footnote" dimColor wrap="truncate-end">
                 · {heard.text}
@@ -1376,10 +1392,10 @@ export const register: Register = on => {
             key={`l${it.seq}`}
             size="footnote"
             dimColor={it.kind === 'ignored' || it.kind === 'info' || it.kind === 'part'}
-            color={it.kind === 'error' ? 'error' : undefined}
+            color={it.kind === 'error' ? 'error' : it.kind === 'cancelled' ? 'warning' : undefined}
           >
-            {it.kind === 'command' ? '→ ' : it.kind === 'error' ? '! ' : it.kind === 'part' ? '… ' : '· '}
-            {it.text}
+            {it.kind === 'command' ? '→ ' : it.kind === 'error' ? '! ' : it.kind === 'part' ? '… ' : it.kind === 'cancelled' ? '' : '· '}
+            {it.kind === 'cancelled' ? t.cancelledLine(it.text) : it.text}
             {it.ms !== null ? `  (${(it.ms / 1000).toFixed(1)} ${t.seconds})` : ''}
           </Text>
         ))}
@@ -1408,6 +1424,7 @@ export const register: Register = on => {
     const dev = await read($, device)
     const defaults = DEFAULT_WORDS[set.language]
     const stopWord = firstWord(set.stop, defaults.stop)
+    const cancelWord = firstWord(set.cancel, defaults.cancel)
     const wakeWord = firstWord(set.wake, firstWord(defaults.wake, ''))
     const scope = (field: string) => `voice-settings-hint-${field}`
     // Біля назви — ⓘ: натиск відкриває підказку під полем (одна на всі, 10 с), а наведення
@@ -1532,6 +1549,19 @@ export const register: Register = on => {
               />,
               t.stopHint(stopWord),
             )}
+        {/* Слово скасування діє в обох режимах — на відміну від стоп-слова, поле видно завжди. */}
+        {row(
+          'cancel',
+          t.setCancel,
+          <Input
+            key="cancel"
+            value={set.cancel}
+            placeholder={defaults.cancel}
+            submitLabel={t.save}
+            onSubmit={(v: string) => void setSetting($, { cancel: v.trim() })}
+          />,
+          t.cancelHint(cancelWord),
+        )}
         {row(
           'beep',
           t.setBeep,

@@ -26,6 +26,18 @@ assert not en.split_tail("I don't")[0]
 # Відомі збіги (ratio рівно 0.75, ті самі три літери): правило їх не відрізняє.
 assert stop.split_tail("запусти бота, робо")[0]  # відомий збіг: «робо» ≈ «роби»
 assert en.split_tail("run it. dont")[0]  # відомий збіг: «dont» ≈ «done»
+# Слово скасування — те саме правило хвоста, окремий matcher.
+cancel = L.WakeMatcher(["відміна"], prefix=False)
+for s in ["запусти бота, відміна", "відміна", "Відміна!", "запусти бота. Відміно."]:
+    assert cancel.split_tail(s)[0], s
+assert cancel.split_tail("запусти бота, відміна") == (True, "запусти бота")
+assert cancel.split_tail("відміна") == (True, "")
+for s in ["це відмінний варіант", "запусти бота", "відмінити"]:
+    assert not cancel.split_tail(s)[0], s
+cancel_en = L.WakeMatcher(["cancel"], prefix=False)
+assert cancel_en.split_tail("cancel")[0]
+assert cancel_en.split_tail("run tests, cancel.") == (True, "run tests")
+assert not cancel_en.split_tail("it was cancelled")[0]
 wake = L.WakeMatcher(["клоде", "клод"])
 assert not wake.split("робі щось")[0]  # активатор правило не змінює
 
@@ -38,11 +50,24 @@ def lang_of(data: dict) -> tuple[str, str]:
         return c.language, c.stop
 
 
+def lang_cancel(data: dict) -> str:
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "control.json").write_text(json.dumps(data), "utf-8")
+        c = L.Control(Path(d))
+        c.poll()
+        return c.cancel
+
+
 assert lang_of({"language": "de"})[0] == "uk"
 assert lang_of({"language": "en"})[0] == "en"
 assert lang_of({})[0] == "uk"
 assert lang_of({})[1] == ""  # стоп порожній = типовий для мови
+assert lang_cancel({}) == ""  # слово скасування порожнє = типове для мови
+assert lang_cancel({"cancel": " стоп, скасуй "}) == "стоп, скасуй"
+assert lang_cancel({"cancel": ["x"]}) == ""  # не рядок -> типове
 assert L.LANG["en"]["stop"] == "done"
+assert L.LANG["uk"]["cancel"] == "відміна"
+assert L.LANG["en"]["cancel"] == "cancel"
 assert L.LANG["uk"]["stop"] == "роби"
 assert L.LANG["en"]["wake"] == "claude,clod,cloud,clawed"
 for lg in ("uk", "en"):  # обидві мови мають однаковий набір ключів

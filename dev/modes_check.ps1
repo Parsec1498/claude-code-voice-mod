@@ -16,12 +16,16 @@ function wav($name, $ssml) {
 wav 'one' 'Claude, start the bot and run the login task.'
 wav 'multi' "Claude, start the bot.<break time='2500ms'/>Then pause it for a while. Done."
 wav 'nostop' "Claude, start the bot.<break time='2500ms'/>Then pause it."
+wav 'cancel' "Claude, start the bot.<break time='2500ms'/>Then pause it. Cancel."
+wav 'cancelauto' 'Claude, start the bot, cancel.'
+wav 'barecancel' "Claude, start the bot.<break time='2500ms'/>Cancel."
+wav 'cancelmid' "Claude, start the bot.<break time='2500ms'/>Then pause it for a while, cancel."
 wav 'noise' 'The weather is nice today, let us go for a walk.'
 function run($file, $control) {
   [IO.File]::WriteAllText("$h\control.json", $control)
   Remove-Item "$h\bus.json" -ErrorAction SilentlyContinue
   $out = & $py -u $script --home $h --file "$h\$file.wav" --no-beep 2>$null
-  $out | Where-Object { $_ -match '"t": "(command|ignored|wake|part)"' } | ForEach-Object { "   $_" }
+  $out | Where-Object { $_ -match '"t": "(command|ignored|wake|part|cancelled)"' } | ForEach-Object { "   $_" }
 }
 "A) автозавершення, одна фраза:"; run 'one' '{"language":"en","autoEnd":true,"beep":"end"}'
 "B) без автозавершення, дві фрази + done:"; run 'multi' '{"language":"en","autoEnd":false,"stop":"done","beep":"end"}'
@@ -29,3 +33,7 @@ function run($file, $control) {
 "D) сигнал одразу (wake): ранній активатор:"; run 'one' '{"language":"en","autoEnd":true,"beep":"wake"}'
 "E) сторонні слова:"; run 'noise' '{"language":"en","autoEnd":true,"beep":"wake"}'
 "F) без автозавершення, стоп типовий для мови (done):"; run 'multi' '{"language":"en","autoEnd":false,"beep":"end"}'
+"G) без автозавершення, «Cancel.» в кінці другої фрази (cancelled, БЕЗ command):"; run 'cancel' '{"language":"en","autoEnd":false,"beep":"end"}'
+"H) з автозавершенням, «cancel» у кінці команди (cancelled, БЕЗ command):"; run 'cancelauto' '{"language":"en","autoEnd":true,"beep":"end"}'
+"I) без автозавершення, голе «Cancel.» окремою фразою (part, cancelled, БЕЗ command):"; run 'barecancel' '{"language":"en","autoEnd":false,"beep":"end"}'
+"J) без автозавершення, «cancel» у кінці довгої (не голої) фрази — через велику модель:"; run 'cancelmid' '{"language":"en","autoEnd":false,"beep":"end"}'

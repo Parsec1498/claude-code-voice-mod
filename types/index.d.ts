@@ -13,7 +13,7 @@ export type VoiceStatus = { state: VoiceState; msg: string | null }
 /** Рядок журналу панелі (подія з bus.json). */
 export type VoiceEntry = {
   seq: number
-  kind: 'command' | 'ignored' | 'part' | 'info' | 'error'
+  kind: 'command' | 'ignored' | 'part' | 'cancelled' | 'info' | 'error'
   text: string
   ms: number | null
 }
@@ -39,10 +39,11 @@ export type VoicePending = {
  * `beep`: off — тиша; wake — сигнал, щойно почуто активатор; end — коли команду завершено;
  *   both — обидва.
  * `autoEnd`: false — команда триває до стоп-слова, тиша її не обриває.
- * `wake` / `stop`: слова через кому; порожній `wake` — дефолт слухача.
+ * `wake` / `stop` / `cancel`: слова через кому; порожній `wake` — дефолт слухача, `cancel` — слово
+ *   скасування команди (діє в обох режимах).
  * `prompt` / `hotwords`: своя підказка розпізнавачу і свої слова-підказки (слова
  *   свого проєкту); порожньо — загальні зі слухача.
- * `language`: мова інтерфейсу мода й розпізнавання; порожні `wake` / `stop` / `prompt`
+ * `language`: мова інтерфейсу мода й розпізнавання; порожні `wake` / `stop` / `cancel` / `prompt`
  *   означають типові для неї.
  */
 export type VoiceSettings = {
@@ -50,6 +51,7 @@ export type VoiceSettings = {
   autoEnd: boolean
   wake: string
   stop: string
+  cancel: string
   prompt: string
   hotwords: string
   language: 'uk' | 'en'

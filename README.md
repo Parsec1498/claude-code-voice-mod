@@ -10,6 +10,10 @@ sent to the chat as your prompt, marked 🎙. Speech is recognized **locally** b
 - **Live transcript** of the command in a status row above the prompt box.
 - **Two ways to end a command**: a pause in speech, or a stop word («Роби» / «Done») — then
   you can dictate with pauses, up to 5 minutes.
+- **Cancel word** («Відміна» / «Cancel», configurable): say it at the end and the command is
+  discarded, nothing goes to the chat. Works in both modes, also on its own after a dictation
+  («… Done» sends, «Cancel» drops everything collected). Saying «Claude, cancel» also answers
+  «no» to a pending confirmation card.
 - **Safety**: an optional Claude model cleans the text and flags risky commands; destructive
   actions in a voice-started turn (deletions, irreversible git, sending data out, changes to
   settings or autostart, background and scheduled tasks) stop until you confirm with a button
@@ -65,7 +69,7 @@ Commands: `/voice-panel`, `/voice-here`, `/voice-lock`, `/voice-mute`, `/voice-c
 `/voice-cancel`, `/voice-safe`.
 
 **Settings ⚙.** Basic, always visible: language, wake word, auto-end, stop word (only when
-auto-end is off), beep, restart the listener. **▸ Advanced**, in three groups:
+auto-end is off), cancel word, beep, restart the listener. **▸ Advanced**, in three groups:
 *Recognition* (models with quality and measured memory, recognizer prompt, hotwords, the
 corrections glossary with «Generate» and «Open», agents extending the glossary),
 *Command processing* (raw / cleaned + raw / cleaned only, model, timeout, the model's full
