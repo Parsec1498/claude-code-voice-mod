@@ -1235,7 +1235,7 @@ export const register: Register = on => {
       who !== 'me'
         ? {
             key: 'here',
-            glyph: '🎧',
+            glyph: t.hereLabel, // словами, як і режим: що зробить кнопка — видно без наведення
             hint: isLocked ? t.hintHereLocked(otherTitle ?? t.otherChat) : t.hintHere,
             press: () => claim($, 'explicit', 'button'),
             primary: true,

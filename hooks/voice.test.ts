@@ -147,7 +147,8 @@ test('чужа сесія-власник: команд не беремо, док
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await ui.find({ text: /Голос → «інший чат»/ })).toBeDefined() // назви A ще не знаємо
-    expect(await ui.find({ text: /Сюди: голос слухатиме цей чат/ })).toBeDefined() // підказка кнопки 🎧
+    expect(await ui.find({ text: /🎧 Сюди/ })).toBeDefined() // підпис кнопки — словами
+    expect(await ui.find({ text: /Сюди: голос слухатиме цей чат/ })).toBeDefined() // і підказка
     await ui.unmount()
   }
 

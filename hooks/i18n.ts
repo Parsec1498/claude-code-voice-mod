@@ -76,6 +76,7 @@ export type Strings = {
   switchNone: string
   sayWake: (word: string) => string
   seconds: string
+  hereLabel: string
   hintHere: string
   hintHereLocked: (title: string) => string
   modeAuto: string
@@ -278,6 +279,7 @@ const uk: Strings = {
   switchNone: 'Голос ні в якому чаті: чат, що слухав, закрито — напишіть у потрібному чи натисніть 🎧',
   sayWake: word => `Скажіть «${word}, …»`,
   seconds: 'с',
+  hereLabel: '🎧 Сюди',
   hintHere: 'Сюди: голос слухатиме цей чат',
   hintHereLocked: title => `Сюди: голос слухатиме цей чат (закріплення з «${title}» зніметься)`,
   modeAuto: '🔓 Авто',
@@ -499,6 +501,7 @@ const en: Strings = {
   switchNone: 'Voice is in no chat: the listening chat was closed — write in the one you need or press 🎧',
   sayWake: word => `Say «${word}, …»`,
   seconds: 's',
+  hereLabel: '🎧 Here',
   hintHere: 'Here: voice will listen to this chat',
   hintHereLocked: title => `Here: voice will listen to this chat (unpins it from «${title}»)`,
   modeAuto: '🔓 Auto',

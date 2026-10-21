@@ -58,7 +58,7 @@ Switch to English in ⚙ → Language (the default is Ukrainian).
 | 🎤 / 🔇 | microphone; off — the listener stops and frees memory |
 | ⚙ | settings |
 | 🕘 | history: what the recognizer heard and what was sent |
-| 🎧 | «Here»: move voice to this chat (shown in chats that are not listening) |
+| 🎧 Here | move voice to this chat (shown in chats that are not listening) |
 | 🔓 Auto / 🔒 Pinned | mode, in the listening chat: Auto — voice follows the chat you write in; Pinned — it stays here until 🎧 or a voice command |
 
 Commands: `/voice-panel`, `/voice-here`, `/voice-lock`, `/voice-mute`, `/voice-confirm`,
