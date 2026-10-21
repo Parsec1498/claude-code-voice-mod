@@ -20,6 +20,7 @@ wav 'cancel' "Claude, start the bot.<break time='2500ms'/>Then pause it. Cancel.
 wav 'cancelauto' 'Claude, start the bot, cancel.'
 wav 'barecancel' "Claude, start the bot.<break time='2500ms'/>Cancel."
 wav 'cancelmid' "Claude, start the bot.<break time='2500ms'/>Then pause it for a while, cancel."
+wav 'donecancel' "Claude, start the bot.<break time='2500ms'/>Then pause it for a while, done, cancel."
 wav 'noise' 'The weather is nice today, let us go for a walk.'
 function run($file, $control) {
   [IO.File]::WriteAllText("$h\control.json", $control)
@@ -37,3 +38,4 @@ function run($file, $control) {
 "H) з автозавершенням, «cancel» у кінці команди (cancelled, БЕЗ command):"; run 'cancelauto' '{"language":"en","autoEnd":true,"beep":"end"}'
 "I) без автозавершення, голе «Cancel.» окремою фразою (part, cancelled, БЕЗ command):"; run 'barecancel' '{"language":"en","autoEnd":false,"beep":"end"}'
 "J) без автозавершення, «cancel» у кінці довгої (не голої) фрази — через велику модель:"; run 'cancelmid' '{"language":"en","autoEnd":false,"beep":"end"}'
+"K) без автозавершення, «…done, cancel.» однією фразою — скасування сильніше за стоп (cancelled, БЕЗ command):"; run 'donecancel' '{"language":"en","autoEnd":false,"beep":"end"}'

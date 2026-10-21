@@ -174,13 +174,17 @@ class WakeMatcher:
     Тому — префікси плюс схожість difflib, а не рівність рядків.
     """
 
-    def __init__(self, variants: list[str], threshold: float = 0.8, prefix: bool = True):
+    def __init__(self, variants: list[str], threshold: float = 0.8, prefix: bool = True,
+                 exact_len: bool = False):
         self.variants = [v.strip().lower() for v in variants if v.strip()]
         self.threshold = threshold
         # Префікс годиться для активатора на ПОЧАТКУ фрази («Клоді» ≈ «Клоде»),
         # але не для стоп-слова в кінці: «роби» — префікс і «робити», а «що
         # будемо робити» не мусить відправляти команду.
         self.prefix = prefix
+        # Слово скасування мусить мати ТОЧНУ довжину: допуск ±1 пускав би «відмінно»,
+        # «відмінна» («все відмінно»), які мовчки скасовували б команду.
+        self.exact_len = exact_len
 
     def _hit(self, token: str) -> bool:
         token = token.strip("'’-")
@@ -189,7 +193,7 @@ class WakeMatcher:
         for v in self.variants:
             if self.prefix and token.startswith(v[:4]) and len(v) >= 4:
                 return True
-            if abs(len(token) - len(v)) > 1:
+            if abs(len(token) - len(v)) > (0 if self.exact_len else 1):
                 continue  # «колода» ≈ «клод» за ratio, але довша на дві літери
             if not self.prefix and token != v and token.startswith(v):
                 continue  # «робив» — інше слово, а не «роби» з помилкою
@@ -921,12 +925,13 @@ def main() -> int:
         stop_word = stop_list[0].strip().capitalize()
         # Слово скасування — те саме правило хвоста, що й у стоп-слова, окремий matcher.
         cancel_list = [w for w in (control.cancel or lg["cancel"]).split(",") if w.strip()]
-        canceller = WakeMatcher(cancel_list, prefix=False)
+        canceller = WakeMatcher(cancel_list, prefix=False, exact_len=True)
         cancel_word = cancel_list[0].strip().capitalize()
         prompt = (args.prompt or control.prompt or lg["prompt"]).replace(lg["addressee"], wake_word)
         hotwords = control.hotwords or args.hotwords
         if not control.auto_end:
-            prompt += f" {stop_word}."  # whisper охочіше пише слово, яке бачив
+            # whisper охочіше пише слова, які бачив
+            prompt += f" {stop_word}. {cancel_word}."
 
     def cue(kind: str) -> None:
         """Сигнал: start — почуто активатор, end — команду завершено."""

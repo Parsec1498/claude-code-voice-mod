@@ -27,17 +27,24 @@ assert not en.split_tail("I don't")[0]
 assert stop.split_tail("запусти бота, робо")[0]  # відомий збіг: «робо» ≈ «роби»
 assert en.split_tail("run it. dont")[0]  # відомий збіг: «dont» ≈ «done»
 # Слово скасування — те саме правило хвоста, окремий matcher.
-cancel = L.WakeMatcher(["відміна"], prefix=False)
-for s in ["запусти бота, відміна", "відміна", "Відміна!", "запусти бота. Відміно."]:
+# Точна довжина слова (exact_len): «відмінно»/«відмінна» («все відмінно») не скасовують.
+cancel = L.WakeMatcher(["відміна"], prefix=False, exact_len=True)
+for s in ["запусти бота, відміна", "відміна", "Відміна!", "запусти бота. Відміно.", "Відміна.", "ну відміну"]:
     assert cancel.split_tail(s)[0], s
 assert cancel.split_tail("запусти бота, відміна") == (True, "запусти бота")
 assert cancel.split_tail("відміна") == (True, "")
-for s in ["це відмінний варіант", "запусти бота", "відмінити"]:
+for s in ["це відмінний варіант", "запусти бота", "відмінити", "все відмінно", "вийшло відмінна",
+          "відмінна", "відмінно"]:
     assert not cancel.split_tail(s)[0], s
-cancel_en = L.WakeMatcher(["cancel"], prefix=False)
+cancel_en = L.WakeMatcher(["cancel"], prefix=False, exact_len=True)
 assert cancel_en.split_tail("cancel")[0]
+assert cancel_en.split_tail("cancel.")[0]
 assert cancel_en.split_tail("run tests, cancel.") == (True, "run tests")
-assert not cancel_en.split_tail("it was cancelled")[0]
+for s in ["it was cancelled", "cancels", "canceled"]:
+    assert not cancel_en.split_tail(s)[0], s
+# Стоп-слово лишається з допуском ±1 (exact_len вимкнено за замовчуванням).
+assert L.WakeMatcher(["відміна"], prefix=False).split_tail("ні, відмна")[0]  # ±1 за замовчуванням
+assert not cancel.split_tail("ні, відмна")[0]  # exact_len: на одну літеру коротше — уже ні
 wake = L.WakeMatcher(["клоде", "клод"])
 assert not wake.split("робі щось")[0]  # активатор правило не змінює
 
