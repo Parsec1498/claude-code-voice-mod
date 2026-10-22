@@ -118,21 +118,14 @@ is free are offered:
 
 | Licence | Voices |
 | --- | --- |
-| CC0 | `ukrainian_tts` (uk); `joe`, `mike`, `kathleen`, `reza_ibrahim` (en_US) |
-| Public domain | `john`, `kristin`, `bryce`, `norman`, `ljspeech` (en_US); `cori` (en_GB) |
-| Apache-2.0 | `lada`, `mykyta`, `oleksa`, `tetiana` (uk); `sam` (en_US) |
-| CC BY 4.0 | `libritts_r` (en_US); `alba`, `aru`, `vctk` (en_GB) — attribution below |
+| CC0 | `ukrainian_tts` (uk) |
+| Public domain | `kristin`, `john`, `bryce`, `norman`, `ljspeech` (en_US); `cori` (en_GB) |
+| Apache-2.0 | `lada`, `mykyta`, `oleksa`, `tetiana` (uk) |
 
 The licence is the voice dataset's, as declared in the voice's `MODEL_CARD` on
-[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices); the same card says whether
-a voice was fine-tuned from another Piper voice. Attribution for the CC BY 4.0 voices
-([licence](https://creativecommons.org/licenses/by/4.0/)):
-
-- `libritts_r` — LibriTTS-R corpus, <http://www.openslr.org/141/>.
-- `alba` — Alba dataset, University of Edinburgh (CSTR), <https://datashare.ed.ac.uk/handle/10283/3270>.
-- `aru` — Acoustics Research Unit speech corpus, University of Liverpool,
-  <https://www.liverpool.ac.uk/architecture/research/acoustics-research-unit/speech-corpus/>.
-- `vctk` — CSTR VCTK Corpus, University of Edinburgh, <https://datashare.ed.ac.uk/handle/10283/3443>.
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Voices fine-tuned from
+voices with restricted licences (`lessac`, research-only; `ryan`, non-commercial) are
+deliberately excluded. None of the offered voices requires attribution.
 
 **Where it lives, how to remove it.** `%USERPROFILE%\.claude\voice-mod\tts\` (`venv\`, `voices\`).
 ⚙ → Advanced → *Speech* → **Remove speech** deletes that folder and turns speech off. The install

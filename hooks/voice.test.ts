@@ -1626,10 +1626,10 @@ test('speak: англійський блок при language=uk → lang en і �
   const w = await speakWorld(on, $, { speak: true, language: 'uk' })
   await $.turn.complete(answered('Report\n🔊 Speak: All done.'))
   expect(speakOf(w)).toMatchObject({ text: 'All done.', lang: 'en', voice: DEFAULT_VOICE.en })
-  w.fs.set(CONTROL, JSON.stringify({ speak: true, speakVoiceEn: 'en_US-mike-medium' }))
+  w.fs.set(CONTROL, JSON.stringify({ speak: true, speakVoiceEn: 'en_US-norman-medium' }))
   await w.clock.advance(1500)
   await $.turn.complete(answered('x\n🔊 Speak: Again.'))
-  expect(speakOf(w)).toMatchObject({ text: 'Again.', voice: 'en_US-mike-medium' })
+  expect(speakOf(w)).toMatchObject({ text: 'Again.', voice: 'en_US-norman-medium' })
 })
 
 const BLOCK = 'Звіт\n🔊 Озвучити: Готово.'

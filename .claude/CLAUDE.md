@@ -210,16 +210,18 @@ turbo (зациклювався на підказці), base як активат
   вшивати в `install.ps1`/`requirements.txt`. Ліцензійний текст — у README (розділ «Spoken
   answers») і PRIVACY; змінюєте, що ставиться чи звідки, — міняйте їх разом.
 - **Голоси** — каталог `VOICES` у `hooks/speak.ts` (ім'я, мова, ліцензія, розмір `.onnx`), лише з
-  вільною ліцензією датасету: CC0, public domain, Apache-2.0, CC BY 4.0 (авторство CC BY — у
-  README обох мов). Ніколи: `lessac`, `ryan`, `hfc_*`, `l2arctic`, `semaine`, голоси з «See URL».
-  Ліцензію беремо з поля `License` у `MODEL_CARD` голосу на HF `rhasspy/piper-voices`; картки частини
-  англійських голосів кажуть «Finetuned from … lessac/Ryan» — це питання до власника, у README
-  зазначено лише, що картка про це каже. `DEFAULT_VOICE` (uk `ukrainian_tts-medium`, en
-  `joe-medium`) тимчасовий — до прослуховування; живе і в `speak.ts`, і в `speech.py`
-  (`words_check` звіряє). Докачка голосу — `ensure_voice` у тому ж фоновому потоці (URL —
-  `voice_urls`, ім'я — лише `valid_voice`, бо з нього складаються шлях і URL); голосу нема на
-  диску — подія `info` «качаю голос…», цей блок пропускається. Зміна `speakVoice*` при
-  `tts == ready` одразу докачує.
+  вільною ліцензією датасету: CC0 (`ukrainian_tts`), public domain (en: `ljspeech`, `kristin`,
+  `john`, `bryce`, `norman`, `cori`), Apache-2.0 (uk: `lada`, `mykyta`, `oleksa`, `tetiana`);
+  CC BY 4.0 у каталозі нема, тож авторство в README не потрібне. Ніколи: `lessac`, `ryan`,
+  `hfc_*`, `l2arctic`, `semaine`, голоси з «See URL» і **донавчені з lessac/ryan** (картка
+  `MODEL_CARD` каже «Finetuned from …»: joe, mike, reza_ibrahim, sam, libritts_r, alba, aru, vctk,
+  kathleen — виключені рішенням власника 2026-10-22: успадковують обмеження батька). Додаючи
+  голос, читайте його `MODEL_CARD` на HF `rhasspy/piper-voices`: `License` і `Training`.
+  `DEFAULT_VOICE` (uk `ukrainian_tts-medium`, en `ljspeech-medium`) тимчасовий — до
+  прослуховування; живе і в `speak.ts`, і в `speech.py` (`words_check` звіряє). Докачка голосу —
+  `ensure_voice` у тому ж фоновому потоці (URL — `voice_urls`, ім'я — лише `valid_voice`, бо з
+  нього складаються шлях і URL); голосу нема на диску — подія `info` «качаю голос…», цей блок
+  пропускається. Зміна `speakVoice*` при `tts == ready` одразу докачує.
 - **Інструкція агенту** — хук `prompt.compose`: поки `speak` увімкнено, ОСТАННІМ розділом
   `{ id: 'voice-mod:speak', scope: 'session' }` (рушій вимагає id `<плагін>:<назва>`) іде
   `speakSection(language)`. Додається в УСІХ сесіях мода, не лише у власника: власник міняється

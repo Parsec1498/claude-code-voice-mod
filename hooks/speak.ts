@@ -95,7 +95,9 @@ export function speakSection(lang: SpeakLang): string {
 }
 
 // Каталог голосів Piper (rhasspy/piper-voices): лише ті, чия ліцензія датасету вільна. Ніколи:
-// lessac, ryan, hfc_*, l2arctic, semaine і всі «See URL». Якість у назві — та, що є на HF
+// lessac, ryan, hfc_*, l2arctic, semaine, «See URL» і ДОНАВЧЕНІ з lessac/ryan (joe, mike, sam,
+// libritts_r, alba, aru, vctk, kathleen…: картка каже «Finetuned from», успадковують
+// обмеження батька). Лишаються навчені з нуля чи від дозволеного батька. Якість у назві — та, що є на HF
 // (для англійських — medium, а де її нема, єдина наявна); `mb` — розмір .onnx (content-length
 // з HF, округлено), перевірено вручну 2026-10-22.
 export type VoiceInfo = { name: string; lang: SpeakLang; license: string; mb: number }
@@ -106,27 +108,18 @@ export const VOICES: readonly VoiceInfo[] = [
   { name: 'uk_UA-oleksa-high', lang: 'uk', license: 'Apache-2.0', mb: 114 },
   { name: 'uk_UA-tetiana-high', lang: 'uk', license: 'Apache-2.0', mb: 114 },
   { name: 'uk_UA-ukrainian_tts-medium', lang: 'uk', license: 'CC0', mb: 77 },
-  { name: 'en_US-joe-medium', lang: 'en', license: 'CC0', mb: 63 },
-  { name: 'en_US-mike-medium', lang: 'en', license: 'CC0', mb: 63 },
-  { name: 'en_US-kathleen-low', lang: 'en', license: 'CC0', mb: 63 },
-  { name: 'en_US-reza_ibrahim-medium', lang: 'en', license: 'CC0', mb: 64 },
-  { name: 'en_US-john-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-ljspeech-medium', lang: 'en', license: 'public domain', mb: 64 },
   { name: 'en_US-kristin-medium', lang: 'en', license: 'public domain', mb: 64 },
+  { name: 'en_US-john-medium', lang: 'en', license: 'public domain', mb: 64 },
   { name: 'en_US-bryce-medium', lang: 'en', license: 'public domain', mb: 64 },
   { name: 'en_US-norman-medium', lang: 'en', license: 'public domain', mb: 64 },
-  { name: 'en_US-ljspeech-medium', lang: 'en', license: 'public domain', mb: 64 },
-  { name: 'en_US-sam-medium', lang: 'en', license: 'Apache-2.0', mb: 63 },
-  { name: 'en_US-libritts_r-medium', lang: 'en', license: 'CC BY 4.0', mb: 79 },
   { name: 'en_GB-cori-medium', lang: 'en', license: 'public domain', mb: 64 },
-  { name: 'en_GB-alba-medium', lang: 'en', license: 'CC BY 4.0', mb: 63 },
-  { name: 'en_GB-aru-medium', lang: 'en', license: 'CC BY 4.0', mb: 77 },
-  { name: 'en_GB-vctk-medium', lang: 'en', license: 'CC BY 4.0', mb: 77 },
 ]
 
 // Тимчасові типові; остаточні — після прослуховування.
 export const DEFAULT_VOICE: Record<SpeakLang, string> = {
   uk: 'uk_UA-ukrainian_tts-medium',
-  en: 'en_US-joe-medium',
+  en: 'en_US-ljspeech-medium',
 }
 
 /** Вибраний у ⚙ голос мови або типовий (порожнє поле = типовий). */

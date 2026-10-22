@@ -165,21 +165,14 @@
 
 | Ліцензія | Голоси |
 | --- | --- |
-| CC0 | `ukrainian_tts` (uk); `joe`, `mike`, `kathleen`, `reza_ibrahim` (en_US) |
-| Суспільне надбання | `john`, `kristin`, `bryce`, `norman`, `ljspeech` (en_US); `cori` (en_GB) |
-| Apache-2.0 | `lada`, `mykyta`, `oleksa`, `tetiana` (uk); `sam` (en_US) |
-| CC BY 4.0 | `libritts_r` (en_US); `alba`, `aru`, `vctk` (en_GB) — авторство нижче |
+| CC0 | `ukrainian_tts` (uk) |
+| Суспільне надбання | `kristin`, `john`, `bryce`, `norman`, `ljspeech` (en_US); `cori` (en_GB) |
+| Apache-2.0 | `lada`, `mykyta`, `oleksa`, `tetiana` (uk) |
 
 Ліцензія — датасету голосу, як заявлено в його `MODEL_CARD` на
-[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices); та сама картка каже, чи
-голос донавчено з іншого голосу Piper. Авторство голосів CC BY 4.0
-([ліцензія](https://creativecommons.org/licenses/by/4.0/)):
-
-- `libritts_r` — корпус LibriTTS-R, <http://www.openslr.org/141/>.
-- `alba` — датасет Alba, Единбурзький університет (CSTR), <https://datashare.ed.ac.uk/handle/10283/3270>.
-- `aru` — мовний корпус Acoustics Research Unit, Ліверпульський університет,
-  <https://www.liverpool.ac.uk/architecture/research/acoustics-research-unit/speech-corpus/>.
-- `vctk` — корпус CSTR VCTK, Единбурзький університет, <https://datashare.ed.ac.uk/handle/10283/3443>.
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Голоси, донавчені з голосів
+з обмеженою ліцензією (`lessac` — лише дослідження, `ryan` — некомерційний), свідомо виключені.
+Жоден із запропонованих голосів не вимагає вказувати авторство.
 
 **Де лежить і як видалити.** `%USERPROFILE%\.claude\voice-mod\tts\` (`venv\`, `voices\`).
 ⚙ → Розширені → *Озвучення* → **Видалити озвучення** стирає цю теку й вимикає озвучку.

@@ -113,10 +113,10 @@ $h = Join-Path $env:TEMP 'voice-dev\thome'
 $cache = Join-Path $env:TEMP 'voice-dev\tts-cache'
 Remove-Item -Recurse -Force $h -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $h | Out-Null
-$joe = 'en_US-joe-medium'
+$lj = 'en_US-ljspeech-medium'
 $base = '"muted":false,"language":"en","speak":true,"wakeModel":"small","model":"small"'
 function ctl($extra) { put "control.json" ('{' + $base + $extra + '}') }
-function say($text, $at = 0, $voice = $joe) {
+function say($text, $at = 0, $voice = $lj) {
   if (-not $at) { $at = ms }
   put "speak.json" (@{ seq = $at; at = $at; text = $text; lang = 'en'; voice = $voice; session = 'test' } | ConvertTo-Json -Compress)
 }
@@ -149,7 +149,7 @@ if ((bus).tts -eq 'ready') { "OK  bus.tts ready" } else {
   put "control.json" ('{"muted":true,"restart":' + (ms) + '}')
   return
 }
-if (@((bus).voices) -contains $joe) { "OK  голос $joe у bus.voices" } else { "FAIL bus.voices=$(((bus).voices) -join ',')" }
+if (@((bus).voices) -contains $lj) { "OK  голос $lj у bus.voices" } else { "FAIL bus.voices=$(((bus).voices) -join ',')" }
 if (-not $hadCache) { robocopy "$h\tts" $cache /E /NFL /NDL /NJH /NJS /NP | Out-Null; "tts закешовано: $cache" }
 
 # speak.json → speaking → ready; поки звучить, SAPI вголос каже фразу з активатором.
@@ -235,7 +235,7 @@ if ((bus).state -ne 'speaking' -and @(eventsAfter $s0 'spoke').Count -eq 0) { "O
 
 # Битий .onnx — стан error з причиною, потім знову ready.
 $bad = 'en_US-kristin-medium'
-Copy-Item "$h\tts\voices\$joe.onnx.json" "$h\tts\voices\$bad.onnx.json"
+Copy-Item "$h\tts\voices\$lj.onnx.json" "$h\tts\voices\$bad.onnx.json"
 [IO.File]::WriteAllText("$h\tts\voices\$bad.onnx", 'broken')
 say 'This voice file is broken.' 0 $bad
 waitFor { alive; (bus).state -eq 'error' } 30 'битий .onnx — стан error'

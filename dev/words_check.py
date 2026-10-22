@@ -249,9 +249,9 @@ assert S.voice_urls("uk_UA-mykyta-high") == (
     f"{HF}/uk/uk_UA/mykyta/high/uk_UA-mykyta-high.onnx",
     f"{HF}/uk/uk_UA/mykyta/high/uk_UA-mykyta-high.onnx.json")
 assert S.voice_urls("uk_UA-lada-x_low")[0] == f"{HF}/uk/uk_UA/lada/x_low/uk_UA-lada-x_low.onnx"
-assert S.voice_urls("en_US-reza_ibrahim-medium")[1] == (
-    f"{HF}/en/en_US/reza_ibrahim/medium/en_US-reza_ibrahim-medium.onnx.json")
-assert S.voice_urls("en_GB-vctk-medium")[0] == f"{HF}/en/en_GB/vctk/medium/en_GB-vctk-medium.onnx"
+assert S.voice_urls("en_US-ljspeech-medium")[1] == (
+    f"{HF}/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json")
+assert S.voice_urls("en_GB-cori-medium")[0] == f"{HF}/en/en_GB/cori/medium/en_GB-cori-medium.onnx"
 for bad in ("", "uk_UA-mykyta", "../x-y-high", "uk_UA-my/kyta-high", "uk_UA-mykyta-ultra",
             "uk_UA-a-b-high", None, 5):
     assert not S.valid_voice(bad), bad
@@ -309,9 +309,9 @@ def control_of(data: dict):
 
 c = control_of({})
 assert (c.speak, c.speak_voice_uk, c.speak_voice_en, c.tts_install, c.tts_remove) == (False, "", "", 0, 0)
-c = control_of({"speak": True, "speakVoiceUk": " uk_UA-lada-x_low ", "speakVoiceEn": "en_US-mike-medium",
+c = control_of({"speak": True, "speakVoiceUk": " uk_UA-lada-x_low ", "speakVoiceEn": "en_US-norman-medium",
                 "ttsInstall": 1_700_000_000_000, "ttsRemove": 1_700_000_000_001})
-assert (c.speak, c.speak_voice_uk, c.speak_voice_en) == (True, "uk_UA-lada-x_low", "en_US-mike-medium")
+assert (c.speak, c.speak_voice_uk, c.speak_voice_en) == (True, "uk_UA-lada-x_low", "en_US-norman-medium")
 assert (c.tts_install, c.tts_remove) == (1_700_000_000_000, 1_700_000_000_001)
 c = control_of({"speak": "yes", "speakVoiceUk": ["x"], "ttsInstall": "1", "ttsRemove": True})
 assert (c.speak, c.speak_voice_uk, c.tts_install, c.tts_remove) == (False, "", 0, 0)
@@ -373,7 +373,7 @@ def wait_until(cond, sec: float = 15.0) -> bool:
     return False
 
 
-VOICE = "en_US-joe-medium"
+VOICE = "en_US-ljspeech-medium"
 with tempfile.TemporaryDirectory() as d:
     home = Path(d)
     venv = home / "tts" / "venv"
@@ -388,8 +388,8 @@ with tempfile.TemporaryDirectory() as d:
     voices.mkdir()
     (voices / f"{VOICE}.onnx").write_bytes(b"")
     (voices / f"{VOICE}.onnx.json").write_text('{"audio": {"sample_rate": 16000}}', "utf-8")
-    (voices / "en_US-mike-medium.onnx.json").write_text("{}", "utf-8")  # без .onnx — не голос
-    (voices / "en_US-sam-medium.onnx.part").write_bytes(b"x")          # недокачаний — не голос
+    (voices / "en_US-norman-medium.onnx.json").write_text("{}", "utf-8")  # без .onnx — не голос
+    (voices / "en_US-bryce-medium.onnx.part").write_bytes(b"x")          # недокачаний — не голос
 
     inst = S.TtsInstaller(home, home / "tts.log")
     assert inst.voices() == [VOICE], inst.voices()

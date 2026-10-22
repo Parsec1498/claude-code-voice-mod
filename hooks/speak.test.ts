@@ -49,7 +49,19 @@ test('інструкція містить маркер своєї мови', () 
 
 test('каталог: лише вільні ліцензії, обидві мови, типові в каталозі', () => {
   expect(VOICES.some(v => /lessac|ryan|hfc_|l2arctic|semaine/.test(v.name))).toBe(false)
+  // донавчені з lessac/ryan — виключені (успадковують обмежену ліцензію)
+  expect(VOICES.some(v => /joe|mike|kathleen|reza_ibrahim|sam|libritts_r|alba|aru|vctk/.test(v.name))).toBe(false)
+  expect(VOICES.every(v => !/CC BY/.test(v.license))).toBe(true)
   expect(VOICES.filter(v => v.lang === 'uk').length).toBe(5)
+  expect(VOICES.filter(v => v.lang === 'en').map(v => v.name).sort()).toEqual([
+    'en_GB-cori-medium',
+    'en_US-bryce-medium',
+    'en_US-john-medium',
+    'en_US-kristin-medium',
+    'en_US-ljspeech-medium',
+    'en_US-norman-medium',
+  ])
+  expect(DEFAULT_VOICE.en).toBe('en_US-ljspeech-medium')
   expect(VOICES.find(v => v.name === DEFAULT_VOICE.uk)?.lang).toBe('uk')
   expect(VOICES.find(v => v.name === DEFAULT_VOICE.en)?.lang).toBe('en')
   expect(new Set(VOICES.map(v => v.name)).size).toBe(VOICES.length)

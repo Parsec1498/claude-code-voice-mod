@@ -28,7 +28,7 @@ from typing import Any
 # Ті самі значення, що DEFAULT_VOICE у hooks/speak.ts (звіряє dev/words_check.py).
 DEFAULT_VOICE: dict[str, str] = {
     "uk": "uk_UA-ukrainian_tts-medium",
-    "en": "en_US-joe-medium",
+    "en": "en_US-ljspeech-medium",
 }
 PIPER_REQ = "piper-tts==1.8.0"
 VOICES_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
