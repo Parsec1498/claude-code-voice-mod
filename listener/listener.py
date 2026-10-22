@@ -446,6 +446,23 @@ def cancel_active(texts: list[str] | None, armed: bool, early_hit: bool) -> bool
     return texts is not None or armed or early_hit
 
 
+def head(text: str, n: int = 160) -> str:
+    """Початок тексту для рядка стану (озвучка: що саме зараз звучить), «…» — коли обрізано."""
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[:n].rstrip() + "…"
+
+
+def speech_state(busy: bool, shown: str, now: float, error_until: float) -> str | None:
+    """Рядок стану навколо озвучки. Звучить — «speaking» завжди, навіть поки висить помилка:
+    інакше ✖ (зупинити) не видно. Змовкло, а помилку, свіжішу за 5 с, перекрила озвучка, —
+    знову «error». Інакше None: стан вирішує решта циклу."""
+    if busy:
+        return "speaking"
+    if shown == "speaking" and now < error_until:
+        return "error"
+    return None
+
+
 def text_of(value: object) -> str:
     """Рядкове поле control.json; будь-що інше — порожньо (= типове)."""
     return value.strip() if isinstance(value, str) else ""
@@ -1037,6 +1054,7 @@ def main() -> int:
     stream = None
     armed_until = 0.0
     last_state = None
+    last_error: str | None = None  # текст останньої помилки: повернути її, коли змовкне озвучка
     born = time.time() * 1000
     cancel_done = born  # остання оброблена мітка ✖; старший за запуск натиск не рахується
     muted_since: float | None = None
@@ -1092,7 +1110,9 @@ def main() -> int:
     voice_sel = (control.speak_voice_uk, control.speak_voice_en)
 
     def state(name: str, msg: str | None = None):
-        nonlocal last_state
+        nonlocal last_state, last_error
+        if name == "error":
+            last_error = msg
         if (name, msg) != last_state:
             last_state = (name, msg)
             emit(t="state", state=name, msg=msg)
@@ -1461,14 +1481,18 @@ def main() -> int:
                     speaker.say(spoken, pending_say["voice"])
                     pending_say = None
                     emit(t="spoke", text=spoken)
-            if speech.deaf(time.time(), speaker.busy(), speaker.deaf_until):
+            busy = speaker.busy()
+            around = speech_state(busy, last_state[0] if last_state else "", time.time(), error_until)
+            if around == "speaking":
+                state("speaking", head(spoken))  # початок блоку — що саме звучить
+            elif around == "error":
+                state("error", last_error)
+            if speech.deaf(time.time(), busy, speaker.deaf_until):
                 # Слухач не чує сам себе: поки звучить і ще 300 мс після — кадри мікрофона
                 # викидаються, фраза не накопичується (як при mute).
                 while not frames.empty():
                     frames.get_nowait()
                 seg.reset()
-                if speaker.busy() and time.time() >= error_until:
-                    state("speaking", tail(spoken))
                 time.sleep(0.05)
                 continue
             speaking = seg.buf is not None

@@ -35,7 +35,8 @@ VOICES_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 FRESH_MS = 60_000     # speak.json, старший за це, — не озвучується
 WAIT_MS = 30_000      # стільки блок чекає на диктовку/команду, далі відкидається
 DEAF_TAIL_S = 0.3     # після кінця звуку мікрофон ще глухий
-SAY_TIMEOUT_S = 60.0  # процес Piper на один блок
+SAY_TIMEOUT_BASE_S = 30.0     # процес Piper на один блок (синтез + відтворення): база…
+SAY_TIMEOUT_PER_CHAR_S = 0.15  # …і стільки на знак — 600 знаків українською звучать ~1 хв
 STEP_TIMEOUT_S = 1800.0  # venv/pip на повільній мережі
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
 CHUNK = 8192
@@ -100,6 +101,11 @@ def speak_action(now_ms: float, at_ms: float, collecting: bool) -> str:
     if now_ms - at_ms > WAIT_MS:
         return "drop"
     return "wait" if collecting else "say"
+
+
+def say_timeout(text: str) -> float:
+    """Скільки чекати процес Piper на блок: 30 с + 0.15 с на знак (600 знаків — 120 с)."""
+    return SAY_TIMEOUT_BASE_S + SAY_TIMEOUT_PER_CHAR_S * len(text)
 
 
 def one_line(text: str) -> str:
@@ -327,9 +333,12 @@ class TtsInstaller:
             raise _Failed(f"голос: {voice!r}")
         self.dir.mkdir(parents=True, exist_ok=True)
         self.log.write_text("", "utf-8")
-        if not self.python.exists():
+        # Поки позначки успіху нема, venv робимо наново (--clear): встановлення, перерване
+        # після копії python.exe, але до ensurepip, інакше лишало б venv без pip, і кожна
+        # повторна спроба падала б на «No module named pip».
+        if not self.installed():
             self._set("venv")
-            self._run([base_python(), "-m", "venv", str(self.dir / "venv")], gen)
+            self._run([base_python(), "-m", "venv", "--clear", str(self.dir / "venv")], gen)
         self._set("pip", mb=0)
         self._run([str(self.python), "-m", "pip", "install", "--disable-pip-version-check",
                    "--no-input", PIPER_REQ], gen, watch=self.dir / "venv")
@@ -516,7 +525,8 @@ class Speaker:
                 timed_out.set()
                 _kill(proc)
 
-            timer = threading.Timer(SAY_TIMEOUT_S, expire)
+            limit = say_timeout(text)
+            timer = threading.Timer(limit, expire)
             timer.daemon = True
             timer.start()
             try:
@@ -540,7 +550,7 @@ class Speaker:
             if gen == self.gen:
                 code = proc.wait(10)
                 if timed_out.is_set():
-                    err = f"piper: timeout {int(SAY_TIMEOUT_S)} s"
+                    err = f"piper: timeout {int(limit)} s"
                 elif code != 0:
                     err = f"piper: exit {code}: {last_line(self.log) or '?'}"
         except Exception as exc:  # noqa: BLE001 — нема пристрою, голосу, процесу: у стан error

@@ -232,6 +232,23 @@ assert L.cancel_active(texts=None, armed=True, early_hit=False)
 assert L.cancel_active(texts=None, armed=False, early_hit=True)
 assert not L.cancel_active(texts=None, armed=False, early_hit=False)
 
+# Рядок стану «🔊 …» — ПОЧАТОК блоку (з «…» в кінці, коли обрізано), а не хвіст, як у диктовки.
+assert L.head(" Готово.\n Тести  пройшли. ") == "Готово. Тести пройшли."
+long_block = "Перше речення блоку. " + "слово " * 60
+assert len(long_block) > 160
+h = L.head(long_block)
+assert h.startswith("Перше речення блоку.") and h.endswith("…") and len(h) <= 161, h
+assert L.head("а" * 160) == "а" * 160  # рівно межа — без «…»
+
+# Стан навколо озвучки: звучить — «speaking» навіть поки висить помилка (інакше ✖ не видно);
+# змовкло, а помилка ще свіжа — знову «error»; інакше None (стан вирішує решта циклу).
+assert L.speech_state(busy=True, shown="error", now=10.0, error_until=15.0) == "speaking"
+assert L.speech_state(busy=True, shown="ready", now=10.0, error_until=0.0) == "speaking"
+assert L.speech_state(busy=False, shown="speaking", now=10.0, error_until=15.0) == "error"
+assert L.speech_state(busy=False, shown="speaking", now=16.0, error_until=15.0) is None
+assert L.speech_state(busy=False, shown="error", now=10.0, error_until=15.0) is None
+assert L.speech_state(busy=False, shown="ready", now=10.0, error_until=0.0) is None
+
 # ---------------------------------------------------------------- озвучення (speech.py)
 root = Path(__file__).resolve().parent.parent
 spec_s = importlib.util.spec_from_file_location("speech_mod", root / "listener" / "speech.py")
@@ -296,6 +313,11 @@ assert S.speak_action(NOW, NOW - 1000, collecting=True) == "wait"
 assert S.speak_action(NOW, NOW - 30_001, collecting=True) == "drop"
 assert S.speak_action(NOW, NOW - 30_001, collecting=False) == "drop"
 assert S.one_line(" Готово.\n\nТести  пройшли.\t") == "Готово. Тести пройшли."
+# Тайм-аут Piper на блок (синтез + відтворення) росте з довжиною: 30 с + 0.15 с на знак —
+# найдовший блок (600 знаків) не обривається посередині.
+assert S.say_timeout("") == 30.0
+assert S.say_timeout("а" * 100) == 45.0
+assert S.say_timeout("а" * 600) == 120.0
 
 
 # control.json: speak (типово false), голоси (рядки), ttsInstall/ttsRemove — мітки, не налаштування.
@@ -493,6 +515,32 @@ with tempfile.TemporaryDirectory() as d:
     finally:
         srv.shutdown()
         S.VOICES_URL = HF
+
+    # Встановлення, перерване посеред venv (python.exe уже скопійовано, pip — ще ні): поки
+    # позначки успіху нема, venv робиться наново з --clear, а не пропускається (інакше кожна
+    # повторна спроба падала б на «No module named pip»).
+    with tempfile.TemporaryDirectory() as d2:
+        home2 = Path(d2)
+        py2 = S.tts_python(home2 / "tts")
+        py2.parent.mkdir(parents=True)
+        py2.write_bytes(b"")  # недороблений venv: python є, pip нема
+        inst2 = S.TtsInstaller(home2, home2 / "tts.log")
+        assert not inst2.installed()
+        ran: list[list[str]] = []
+
+        def fake_run(cmd, gen, watch=None):
+            ran.append(cmd)
+            if "pip" in cmd:
+                raise S._Failed("стоп на pip")
+
+        inst2._run = fake_run
+        assert inst2.start(VOICE)
+        res: list = []
+        assert wait_until(lambda: bool(res.extend(inst2.take()) or res))
+        assert res == ["стоп на pip"], res
+        assert ran[0][1:3] == ["-m", "venv"] and "--clear" in ran[0], ran
+        assert ran[0][-1] == str(home2 / "tts" / "venv"), ran
+        assert ran[1][1:4] == ["-m", "pip", "install"], ran
 
     # Видалення: тека tts\ зникає цілком.
     assert inst.remove() is None
