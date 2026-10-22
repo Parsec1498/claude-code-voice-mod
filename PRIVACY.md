@@ -22,7 +22,9 @@ only after you press the button or choose a voice that is not yet on disk. While
 is on, the agent's system prompt carries one extra section asking for that block; with it off
 the prompt is not changed.
 
-**Stored on your computer** (in `%USERPROFILE%\.claude\voice-mod`): settings, the last 40
+**Stored on your computer** (in `%USERPROFILE%\.claude\voice-mod`): settings (including the
+text of commands you allowed with «Don't ask again», which is also added to the filter model's
+instruction), the last 40
 recognized phrases, which chat currently receives voice, your glossary, the Python
 environment and the speech models; with spoken answers also the last block to be spoken
 (`speak.json`, written only while speech is on), the speech environment and voices (`tts\`)

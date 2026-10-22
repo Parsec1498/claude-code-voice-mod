@@ -33,7 +33,14 @@ export type VoicePending = {
   reason: string
   at: number
   key: string | null
+  /** Інструмент картки дії, який можна дозволити назавжди; null — команда чи не можна (термінал, захист). */
+  tool?: string | null
+  /** Стан ☐/☑ «Не питати більше»; null — галочки на цій картці нема. */
+  remember?: boolean | null
 }
+
+/** Дозволене людиною без підтвердження (☑ «Не питати більше» на картці). */
+export type VoiceAllowed = { kind: 'command'; text: string } | { kind: 'tool'; tool: string }
 
 /**
  * Налаштування з вікна ⚙ — у control.json, спільні для всіх сесій і слухача.
@@ -76,6 +83,8 @@ export type VoiceSettings = {
   /** Голос Piper для української/англійської; порожньо = типовий (speak.DEFAULT_VOICE). */
   speakVoiceUk: string
   speakVoiceEn: string
+  /** Дозволене без підтвердження: команди (і схожі за змістом) та інструменти (не термінал). */
+  allowed: VoiceAllowed[]
 }
 
 declare module 'claude-code' {

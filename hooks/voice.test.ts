@@ -23,7 +23,7 @@ function bus(at: number, seq: number, events: Ev[], state = 'ready'): string {
 const USAGE = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
 // Підставна модель фільтра: відповідь за текстом команди; без запису — чистить нічого.
-type Replies = Record<string, { clean: string; risk: 'safe' | 'confirm'; reason?: string }>
+type Replies = Record<string, { clean: string; risk: 'safe' | 'confirm'; reason?: string; allowed?: boolean }>
 
 function world(on: On, session: string, files: Record<string, string>, replies: Replies = {}) {
   mock.env(on, { USERPROFILE: 'C:\\Users\\T' })
@@ -521,6 +521,112 @@ test('картка: кнопка «Так» підтверджує лише ту
   await again.press({ key: 'yes' })
   await again.unmount()
   expect(w.submitted.at(-1)).toMatch(/rm -rf D:\/Dev/)
+})
+
+const allowedOf = (fs: Map<string, string>): unknown => JSON.parse(fs.get(CONTROL) ?? '{}').allowed
+
+test('☑ «Не питати більше» на картці команди: схожа команда далі йде без картки', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) }, {
+    'видали тимчасові логи': { clean: 'Видали тимчасові логи.', risk: 'confirm', reason: 'видалення' },
+    'видали логи з темп': { clean: 'Видали логи з temp.', risk: 'safe', allowed: true },
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'видали тимчасові логи' }]))
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ text: /☐ Не питати більше/ })).toBeDefined()
+  await ui.press({ key: 'remember' })
+  expect(await ui.find({ text: /☑ Не питати більше/ })).toBeDefined()
+  await w.clock.advance(2000)
+  await ui.press({ key: 'yes' })
+  await ui.unmount()
+  expect(w.submitted).toEqual(['🎙 Видали тимчасові логи.\n(розпізнано: «видали тимчасові логи»)'])
+  expect(allowedOf(w.fs)).toEqual([{ kind: 'command', text: 'Видали тимчасові логи.' }])
+
+  // Інакше сказане — модель бачить дозволене в інструкції й каже allowed; локальний «видал» не зупиняє.
+  w.fs.set(BUS, bus(T0 + 5000, 3, [{ seq: 3, kind: 'command', text: 'видали логи з темп' }]))
+  await w.clock.advance(500)
+  expect(w.calls.at(-1)?.system).toContain('«Видали тимчасові логи.»')
+  expect(w.submitted.at(-1)).toBe('🎙 Видали логи з temp.\n(розпізнано: «видали логи з темп»)')
+})
+
+test('☑ «Не питати більше» запам\'ятовує лише разом із кнопкою «Так», не голосом', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: '{"safeMode":false}' }, {
+    'видали все': { clean: 'Видали все.', risk: 'confirm', reason: 'видалення' },
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 2, [{ seq: 2, kind: 'command', text: 'видали все' }]))
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'remember' })
+  await ui.unmount()
+  w.fs.set(BUS, bus(T0 + 1000, 3, [{ seq: 3, kind: 'command', text: 'так' }]))
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual(['🎙 Видали все.\n(розпізнано: «видали все»)'])
+  expect(allowedOf(w.fs)).toBeUndefined()
+})
+
+test('☑ на картці дії: інструмент дозволено з будь-якими аргументами; терміналу галочки нема', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: '🎙 видали твина 129', turnId: 't1' })
+  const del = (alt: string) => ({ tool: 'mcp__drbot__deleteAlt', alt, command: `deleteAlt ${alt}` }) as never
+  expect(((await $.tool.call(del('129'))) as { deny?: string }).deny).toMatch(/зупинено/)
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'remember' })
+  await w.clock.advance(2000)
+  await ui.press({ key: 'yes' })
+  await ui.unmount()
+  expect(allowedOf(w.fs)).toEqual([{ kind: 'tool', tool: 'mcp__drbot__deleteAlt' }])
+
+  await $.turn.start({ text: w.submitted.at(-1) ?? '', turnId: 't2' })
+  expect(((await $.tool.call(del('129'))) as { deny?: string }).deny).toBeUndefined()
+  expect(((await $.tool.call(del('130'))) as { deny?: string }).deny).toBeUndefined()
+  expect(w.ran).toEqual(['deleteAlt 129', 'deleteAlt 130'])
+
+  // Термінал — без галочки, а дозвіл інструмента його не стосується.
+  expect(((await $.tool.call({ tool: 'Bash', command: 'rm -rf a', description: 'x' } as never)) as { deny?: string }).deny).toMatch(/зупинено/)
+  const bash = await $.ui.mount(BAND)
+  expect(await bash.find({ text: /rm -rf a/ })).toBeDefined()
+  expect(await bash.find({ key: 'remember' })).toBeUndefined()
+  await bash.unmount()
+})
+
+test('гвард: запис «Bash» у дозволеному (руками в control.json) термінал не відчиняє', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', {
+    [BUS]: bus(T0, 1, []),
+    [CONTROL]: '{"allowed":[{"kind":"tool","tool":"Bash"},{"kind":"tool","tool":"CronCreate"}]}',
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  await $.turn.start({ text: '🎙 прибери', turnId: 't1' })
+  expect(((await $.tool.call({ tool: 'Bash', command: 'rm -rf a', description: 'x' } as never)) as { deny?: string }).deny).toMatch(/зупинено/)
+  expect(((await $.tool.call({ tool: 'CronCreate', cron: '* * * * *', prompt: 'x' } as never)) as { deny?: string }).deny).toMatch(/зупинено/)
+  expect(w.ran).toEqual([])
+})
+
+test('⚙: «Дозволено без підтвердження» — список із ✕, порожній — підказка', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', {
+    [BUS]: bus(T0, 1, []),
+    [CONTROL]: '{"muted":true,"allowed":[{"kind":"command","text":"Закрий ці акаунти."},{"kind":"tool","tool":"mcp__drbot__deleteAlt"},{"kind":"bogus"}]}',
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  let ui = await settingsUi(x => $.ui.mount(x))
+  expect(await ui.find({ text: /«Закрий ці акаунти\.» і схожі/ })).toBeDefined()
+  expect(await ui.find({ text: /mcp__drbot__deleteAlt/ })).toBeDefined()
+  await ui.press({ key: 'allowed-x-0' })
+  await ui.unmount()
+  expect(JSON.parse(w.fs.get(CONTROL) ?? '{}')).toEqual({ muted: true, allowed: [{ kind: 'tool', tool: 'mcp__drbot__deleteAlt' }] })
+  ui = await settingsUi(x => $.ui.mount(x))
+  await ui.press({ key: 'allowed-x-0' })
+  expect(await ui.find({ text: /Порожньо/ })).toBeDefined()
+  await ui.unmount()
+  expect(allowedOf(w.fs)).toEqual([])
 })
 
 // Шар дії не вимикається в жодному режимі обробки команди (filterMode).
@@ -1101,11 +1207,12 @@ const DEFAULT_SETTINGS = {
   speak: false,
   speakVoiceUk: '',
   speakVoiceEn: '',
+  allowed: [],
 }
 
 test('settingsOf: типові значення і відкидання битих', () => {
   expect(settingsOf({})).toEqual(DEFAULT_SETTINGS)
-  const bad = { filterMode: 'x', filterModel: 'gpt', filterTimeoutMs: 'x', language: 'de', wakeModel: 5, model: null, filterNotes: 7, chat: 3 }
+  const bad = { filterMode: 'x', filterModel: 'gpt', filterTimeoutMs: 'x', language: 'de', wakeModel: 5, model: null, filterNotes: 7, chat: 3, allowed: 'x' }
   expect(settingsOf(bad as never)).toEqual(DEFAULT_SETTINGS)
   expect(settingsOf({ filterTimeoutMs: 4000 } as never).filterTimeoutMs).toBe(6000)
   const good = settingsOf({ filterMode: 'clean', filterModel: 'sonnet', filterTimeoutMs: 10000, filterNotes: ' a ', wakeModel: ' small ', model: 'large-v3', chat: ' Перейди в ' })
@@ -1367,6 +1474,7 @@ test('ⓘ: у кожного поля ⚙ є кнопка, а підказка �
   const fields = [
     'language', 'safe', 'beep', 'autoEnd', 'wake', 'stop', 'cancel', 'filterMode', 'filterModel',
     'filterTimeout', 'filterNotes', 'wakeModel', 'model', 'prompt', 'hotwords', 'chat', 'glossary', 'autoTerms', 'filterSystem',
+    'allowed',
   ]
   for (const f of fields) {
     await ui.press({ key: `info-${f}` })

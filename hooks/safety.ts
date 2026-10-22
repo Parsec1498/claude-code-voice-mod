@@ -94,16 +94,22 @@ export function defaultFilterSystem(lang: 'uk' | 'en'): string {
  * виправляє там, де словник слухача не встиг; ідуть перед `notes`, щоб останнє слово
  * лишалось за правилами людини.
  */
-export function filterSystem(lang: 'uk' | 'en', notes: string, custom = '', terms = ''): string {
+export function filterSystem(lang: 'uk' | 'en', notes: string, custom = '', terms = '', allowed: readonly string[] = []): string {
   const parts = [custom.trim() || defaultFilterSystem(lang)]
   const list = terms.trim()
   if (list) parts.push((lang === 'en' ? TERMS_EN : TERMS_UK) + list)
+  // Дозволене людиною (☑ «Не питати більше» на картці) — за змістом, а не дослівно.
+  if (allowed.length) parts.push([lang === 'en' ? ALLOWED_EN : ALLOWED_UK, ...allowed.map(a => `- «${a}»`)].join('\n'))
   if (notes.trim()) parts.push(notes.trim())
   return parts.join('\n\n')
 }
 
 const TERMS_UK = 'Терміни проєкту — якщо в команді чути щось схоже, пиши саме так: '
 const TERMS_EN = 'Project terms — if the command contains something that sounds like one, write it exactly so: '
+const ALLOWED_UK =
+  'Людина вже дозволила без підтвердження такі команди й схожі на них за змістом. Якщо команда — одна з них (інакше сказана, з іншими числами чи назвами) і не робить нічого ризиковішого, став risk "safe" і додай у JSON поле "allowed": true:'
+const ALLOWED_EN =
+  'The human has already allowed these commands and ones similar in meaning without confirmation. If the command is one of them (worded differently, with other numbers or names) and does nothing riskier, set risk "safe" and add the field "allowed": true to the JSON:'
 
 export function filterPrompt(text: string): string {
   return `<command>${text.replace(/<\/?command>/g, '')}</command>`
@@ -114,24 +120,31 @@ export function filterPrompt(text: string): string {
  * відступ до сирого тексту з локальною оцінкою: фільтр не має права ЗУПИНИТИ
  * голос, лише зробити його обережнішим.
  */
-export function parseFilterReply(raw: string, reply: string | null): Filtered {
+export function parseFilterReply(raw: string, reply: string | null, allowed: readonly string[] = []): Filtered {
   const local = localRisk(raw)
   let clean = raw.trim()
   let risk: Risk = local ? 'confirm' : 'safe'
   let reason: string | null = local
+  // Дозволене людиною знімає лише локальний шар (корені слів), і лише коли це підтвердила модель
+  // («allowed» при safe) або текст збігся дослівно; confirm від моделі лишається confirm.
+  let isAllowed = allowed.some(a => norm(a) === norm(raw))
   if (reply) {
     const m = reply.match(/\{[\s\S]*\}/)
     try {
-      const v = m ? (JSON.parse(m[0]) as { clean?: unknown; risk?: unknown; reason?: unknown }) : null
+      const v = m ? (JSON.parse(m[0]) as { clean?: unknown; risk?: unknown; reason?: unknown; allowed?: unknown }) : null
       if (v && typeof v.clean === 'string' && v.clean.trim()) clean = v.clean.trim()
       if (v && v.risk === 'confirm') {
         risk = 'confirm'
         reason = typeof v.reason === 'string' && v.reason.trim() ? v.reason.trim() : reason ?? 'модель вважає ризиковим'
+        isAllowed = false
+      } else if (v && v.allowed === true && allowed.length) {
+        isAllowed = true
       }
     } catch {
       // сміття замість JSON — лишаємо сирий текст і локальну оцінку
     }
   }
+  if (isAllowed) return { clean, risk: 'safe', reason: null }
   // Очищений текст перевіряємо ще раз: «почисти» могло з'явитись саме в ньому.
   const again = localRisk(clean)
   if (again && risk === 'safe') {
@@ -193,13 +206,26 @@ export function describeCall(tool: string, e: Record<string, unknown>): string {
 }
 
 /**
+ * Чи можна дозволити інструмент назавжди (☑ «Не питати більше» на картці дії). Термінал — ні:
+ * шаблон команди або надто широкий, або ніколи не повторюється. Фонове й відкладене — ні: воно
+ * поза наглядом. Захищені шляхи — ні: інакше голос дозволив би собі вимкнути власний захист.
+ */
+export function isRememberable(tool: string, e: Record<string, unknown>): boolean {
+  if (tool === 'Bash' || tool === 'PowerShell') return false
+  const why = destructiveReason(tool, e)
+  return why !== BACKGROUND_REASON && why !== PROTECTED_REASON
+}
+
+const BACKGROUND_REASON = 'фонова дія поза наглядом'
+
+/**
  * Чому виклик руйнівний, або null. Write/Edit у проєкті свідомо не тут: їх відкочує
  * git; але захищені шляхи (PROTECTED_PATH) — так, бо там і вимкнення самого захисту.
  */
 export function destructiveReason(tool: string, e: Record<string, unknown>): string | null {
   // Фонове переживає хід — і гвард, що дивиться лише на хід, запущений голосом.
-  if (e.run_in_background === true) return 'фонова дія поза наглядом'
-  if (DEFERRED_TOOLS.has(tool)) return 'фонова дія поза наглядом'
+  if (e.run_in_background === true) return BACKGROUND_REASON
+  if (DEFERRED_TOOLS.has(tool)) return BACKGROUND_REASON
   if (tool === 'Bash' || tool === 'PowerShell') {
     const cmd = String(e.command ?? '')
     for (const [re, why] of DESTRUCTIVE_SHELL) if (re.test(cmd)) return why

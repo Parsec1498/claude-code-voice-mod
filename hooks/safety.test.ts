@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { callKey, destructiveReason, filterSystem, isNo, isYes, localRisk, parseFilterReply } from './safety'
+import { callKey, destructiveReason, filterSystem, isNo, isRememberable, isYes, localRisk, parseFilterReply } from './safety'
 
 test('«так» і «ні» — короткі відповіді, а не нові команди', () => {
   for (const t of ['так', 'Так.', 'так, видаляй', 'давай', 'ok', 'Підтверджую!']) expect(isYes(t)).toBe(true)
@@ -133,6 +133,44 @@ test('системна інструкція фільтра: мова інтер�
   expect(withNotes.endsWith('\n\nMyApp латиницею')).toBe(true)
   expect(withNotes.startsWith(filterSystem('uk', ''))).toBe(true)
   expect(filterSystem('en', '   ')).toBe(en) // порожні правила нічого не дописують
+})
+
+test('інструкція фільтра: дозволені людиною команди — абзацом перед правилами людини', () => {
+  const uk = filterSystem('uk', 'MyApp латиницею', '', 'Login', ['Закрий ці акаунти', 'Запусти 10 акаунтів'])
+  expect(uk).toContain('\n\nЛюдина вже дозволила без підтвердження такі команди')
+  expect(uk).toContain('«Закрий ці акаунти»')
+  expect(uk).toContain('"allowed": true')
+  expect(uk.indexOf('Терміни проєкту')).toBeLessThan(uk.indexOf('Людина вже дозволила'))
+  expect(uk.endsWith('MyApp латиницею')).toBe(true)
+  const en = filterSystem('en', '', '', '', ['Close these accounts'])
+  expect(en).toContain('«Close these accounts»')
+  expect(en).not.toMatch(/[іїєґ]/i)
+  expect(filterSystem('uk', '', '', '', [])).toBe(filterSystem('uk', ''))
+})
+
+test('дозволене людиною: модель каже «allowed» — локальний шар не зупиняє', () => {
+  const allowed = ['Видали тимчасові логи']
+  const reply = '{"clean": "Видали логи з temp.", "risk": "safe", "reason": null, "allowed": true}'
+  expect(parseFilterReply('видали логи з темп', reply, allowed).risk).toBe('safe')
+  // Без списку «allowed» від моделі нічого не важить: локальний шар лишається.
+  expect(parseFilterReply('видали логи з темп', reply).risk).toBe('confirm')
+  // «allowed» разом із confirm — це confirm.
+  const both = '{"clean": "Видали все.", "risk": "confirm", "reason": "видалення", "allowed": true}'
+  expect(parseFilterReply('видали все', both, allowed).risk).toBe('confirm')
+  // Моделі нема чи сміття — лише точний збіг (без регістру й розділових знаків).
+  expect(parseFilterReply('видали тимчасові логи!', null, allowed).risk).toBe('safe')
+  expect(parseFilterReply('видали тимчасові логи', 'не JSON', allowed).risk).toBe('safe')
+  expect(parseFilterReply('видали всі логи', null, allowed).risk).toBe('confirm')
+})
+
+test('що можна запам\'ятати з картки дії: інструмент цілком, але не термінал і не захист', () => {
+  expect(isRememberable('mcp__drbot__deleteAlt', {})).toBe(true)
+  expect(isRememberable('mcp__x__send_message', { text: 'hi' })).toBe(true)
+  expect(isRememberable('Bash', { command: 'rm -rf a' })).toBe(false)
+  expect(isRememberable('PowerShell', { command: 'Remove-Item a' })).toBe(false)
+  expect(isRememberable('CronCreate', {})).toBe(false)
+  expect(isRememberable('mcp__x__deleteAlt', { run_in_background: true })).toBe(false)
+  expect(isRememberable('Write', { file_path: 'C:\\Users\\T\\.claude\\settings.json' })).toBe(false)
 })
 
 test('інструкція фільтра: слова-підказки — абзацом після інструкції, перед правилами людини', () => {

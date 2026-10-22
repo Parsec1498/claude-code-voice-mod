@@ -20,7 +20,10 @@ sent to the chat as your prompt, marked 🎙. Speech is recognized **locally** b
 - **Safety**: an optional Claude model cleans the text and flags risky commands; destructive
   actions in a voice-started turn (deletions, irreversible git, sending data out, changes to
   settings or autostart, background and scheduled tasks) stop until you confirm with a button
-  or by typing. In safe mode (default) voice cannot confirm them.
+  or by typing. In safe mode (default) voice cannot confirm them. Tick «☐ Don't ask again» on
+  the card and press «Yes» to stop asking: a command is then allowed together with ones similar
+  in meaning (the filter model judges), a tool (not a terminal command) with any arguments.
+  The list is in the settings, under *Safety and chats*, with ✕ to remove an entry.
 - **Chat routing**: the status row names the chat that listens («Voice → «Bot»»), and so does
   the live transcript, before the command is sent. Mode **Auto** — voice follows the chat you
   write in; **Pinned** — it stays put. Switch by 🎧 «Here», or say «Switch chat <name>,
@@ -82,7 +85,7 @@ installed, then a switch), restart the listener. **▸ Advanced**, in three grou
 corrections glossary with «Generate» and «Open», agents extending the glossary),
 *Command processing* (raw / cleaned + raw / cleaned only, model, timeout, the model's full
 instruction — editable, «Default» restores it — and short additions), *Safety and chats*
-(safe mode, the switch-chat phrase). A fourth group, *Speech*, appears once spoken answers
+(safe mode, what is allowed without confirmation, the switch-chat phrase). A fourth group, *Speech*, appears once spoken answers
 are installed: a voice for Ukrainian, a voice for English and «Remove speech» (also shown after
 a failed install, to clean it up). Every field has an ⓘ hint.
 
@@ -164,7 +167,8 @@ legal advice.
   ~60 MB) from PyPI, then a voice (~20–115 MB, `.onnx` + `.onnx.json`) from Hugging Face
   (`rhasspy/piper-voices`); choosing another voice in ⚙ downloads that voice. Licences:
   [Spoken answers](#spoken-answers-optional).
-- **Writes** only under `%USERPROFILE%\.claude\voice-mod`: settings (`control.json`), the
+- **Writes** only under `%USERPROFILE%\.claude\voice-mod`: settings (`control.json`, including
+  the commands and tools you allowed without confirmation), the
   listener's status with the last 40 recognized phrases (`bus.json`), which chat owns voice
   (`owner.json`, `alive-*.json`), your glossary (`glossary.txt`), the venv and the models; with
   spoken answers also the text being spoken (`speak.json`), the second venv and the voices

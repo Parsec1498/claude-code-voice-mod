@@ -99,6 +99,8 @@ export type Strings = {
   confirmAction: string
   yes: string
   no: string
+  rememberOff: string
+  rememberOn: string
   why: string
   safeCardHint: (wake: string) => string
   voiceCardHint: (wake: string) => string
@@ -112,6 +114,7 @@ export type Strings = {
   noteSafeOff: string
   noteAllowed: (text: string) => string
   noteAllowedAction: (text: string) => string
+  noteRemembered: (text: string) => string
   noteRejected: (why: string, text: string) => string
   rejectCancelled: string
   rejectLate: string
@@ -171,6 +174,11 @@ export type Strings = {
   safeOff: string
   safeOnHint: string
   safeOffHint: string
+  setAllowed: string
+  allowedHint: string
+  allowedEmpty: string
+  allowedCommand: (text: string) => string
+  allowedTool: (tool: string) => string
   setBeep: string
   beepOff: string
   beepWake: string
@@ -328,6 +336,8 @@ const uk: Strings = {
   confirmAction: 'Підтвердіть дію',
   yes: 'Так',
   no: 'Ні',
+  rememberOff: '☐ Не питати більше',
+  rememberOn: '☑ Не питати більше',
   why: 'Чому',
   safeCardHint: wake =>
     `Безпечний режим: підтвердження — кнопкою, «так» у чаті чи /voice-confirm; голосом лише «${wake}, ні».`,
@@ -340,6 +350,7 @@ const uk: Strings = {
   noteSafeOff: '🔓 безпечний режим вимкнено',
   noteAllowed: text => `✓ дозволено: ${text}`,
   noteAllowedAction: text => `✓ дозволено дію: ${text}`,
+  noteRemembered: text => `☑ більше не питатиму: ${text}`,
   noteRejected: (why, text) => `✗ ${why}: ${text}`,
   rejectCancelled: 'скасовано',
   rejectLate: 'не підтверджено вчасно',
@@ -400,6 +411,12 @@ const uk: Strings = {
   safeOff: '🔓 Вимкнено',
   safeOnHint: 'Небезпечне підтверджується лише кнопкою чи текстом, не голосом.',
   safeOffHint: '«Так» голосом теж підтверджує небезпечну дію.',
+  setAllowed: 'Дозволено без підтвердження',
+  allowedHint:
+    'Поповнюється галочкою «Не питати більше» на картці підтвердження (лише разом із кнопкою «Так»). Команда — разом зі схожими за змістом; інструмент — з будь-якими аргументами. Команди терміналу сюди не потрапляють. ✕ — прибрати.',
+  allowedEmpty: 'Порожньо — постав ☑ «Не питати більше» на картці підтвердження.',
+  allowedCommand: text => `«${text}» і схожі`,
+  allowedTool: tool => `інструмент ${tool}`,
   setBeep: 'Звуковий сигнал',
   beepOff: 'Вимкнено',
   beepWake: 'Одразу після активатора',
@@ -581,6 +598,8 @@ const en: Strings = {
   confirmAction: 'Confirm the action',
   yes: 'Yes',
   no: 'No',
+  rememberOff: "☐ Don't ask again",
+  rememberOn: "☑ Don't ask again",
   why: 'Why',
   safeCardHint: wake =>
     `Safe mode: confirm with the button, "yes" in the chat or /voice-confirm; by voice only «${wake}, no».`,
@@ -593,6 +612,7 @@ const en: Strings = {
   noteSafeOff: '🔓 safe mode off',
   noteAllowed: text => `✓ allowed: ${text}`,
   noteAllowedAction: text => `✓ allowed the action: ${text}`,
+  noteRemembered: text => `☑ won't ask again: ${text}`,
   noteRejected: (why, text) => `✗ ${why}: ${text}`,
   rejectCancelled: 'cancelled',
   rejectLate: 'not confirmed in time',
@@ -653,6 +673,12 @@ const en: Strings = {
   safeOff: '🔓 Off',
   safeOnHint: 'Dangerous actions are confirmed only with the button or by typing, not by voice.',
   safeOffHint: '"Yes" by voice also confirms a dangerous action.',
+  setAllowed: 'Allowed without confirmation',
+  allowedHint:
+    "Filled by the \"Don't ask again\" checkbox on a confirmation card (only together with the Yes button). A command counts with ones similar in meaning; a tool with any arguments. Terminal commands never go here. ✕ removes.",
+  allowedEmpty: "Empty — tick ☑ \"Don't ask again\" on a confirmation card.",
+  allowedCommand: text => `«${text}» and similar`,
+  allowedTool: tool => `tool ${tool}`,
   setBeep: 'Beep',
   beepOff: 'Off',
   beepWake: 'Right after the wake word',

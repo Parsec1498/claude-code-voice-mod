@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, Register, RenderChildren } from 'claude-code'
 
-import type { VoiceEntry, VoiceOwner, VoicePending, VoiceSettings, VoiceState, VoiceStatus } from '../types'
+import type { VoiceAllowed, VoiceEntry, VoiceOwner, VoicePending, VoiceSettings, VoiceState, VoiceStatus } from '../types'
 import { chatPhraseRest, matchChat, parseListing } from './chats'
 import {
   ADD_TERM_DESCRIPTION,
@@ -29,6 +29,7 @@ import {
   defaultFilterSystem,
   filterSystem,
   isNo,
+  isRememberable,
   isYes,
   parseFilterReply,
 } from './safety'
@@ -123,6 +124,7 @@ const SETTINGS_DEFAULT: VoiceSettings = {
   speak: false,
   speakVoiceUk: '',
   speakVoiceEn: '',
+  allowed: [],
 }
 const settings = atom({ plugin: 'voice-mod', key: 'settings' } as const, SETTINGS_DEFAULT)
 // Текст особистого словника, як він на диску, — для редактора у ⚙ (читає тік, поки ⚙ відкрите).
@@ -587,8 +589,23 @@ export function settingsOf(c: Control): VoiceSettings {
     speak: c.speak === true,
     speakVoiceUk: typeof c.speakVoiceUk === 'string' ? c.speakVoiceUk.trim() : '',
     speakVoiceEn: typeof c.speakVoiceEn === 'string' ? c.speakVoiceEn.trim() : '',
+    allowed: allowedOf(c.allowed),
   }
 }
+
+/** Список дозволеного з control.json: биті записи відкидаємо, решту лишаємо як є. */
+function allowedOf(v: unknown): VoiceAllowed[] {
+  if (!Array.isArray(v)) return []
+  const out: VoiceAllowed[] = []
+  for (const a of v as Array<Record<string, unknown> | null>) {
+    if (a?.kind === 'command' && typeof a.text === 'string' && a.text.trim()) out.push({ kind: 'command', text: a.text.trim() })
+    else if (a?.kind === 'tool' && typeof a.tool === 'string' && a.tool.trim()) out.push({ kind: 'tool', tool: a.tool.trim() })
+  }
+  return out
+}
+
+/** Тексти дозволених команд — для інструкції фільтра й дослівного збігу. */
+const allowedCommands = (set: VoiceSettings): string[] => set.allowed.flatMap(a => (a.kind === 'command' ? [a.text] : []))
 
 /** Перше слово зі списку через кому — як його показувати людині. */
 export function firstWord(list: string, fallback: string): string {
@@ -843,15 +860,15 @@ async function filterCommand($: EngineInterface, raw: string, set: VoiceSettings
   try {
     const r = await $.model.complete({
       model: set.filterModel,
-      system: filterSystem(set.language, set.filterNotes, set.filterSystem, set.hotwords),
+      system: filterSystem(set.language, set.filterNotes, set.filterSystem, set.hotwords, allowedCommands(set)),
       prompt: filterPrompt(raw),
       maxTokens: 400,
       effort: 'low',
       timeoutMs: set.filterTimeoutMs,
     })
-    return parseFilterReply(raw, r.isAnswered ? r.text : null)
+    return parseFilterReply(raw, r.isAnswered ? r.text : null, allowedCommands(set))
   } catch {
-    return parseFilterReply(raw, null)
+    return parseFilterReply(raw, null, allowedCommands(set))
   }
 }
 
@@ -867,6 +884,8 @@ async function approve($: EngineInterface, at?: number): Promise<void> {
     return
   }
   await update($, pending, () => null)
+  // ☑ «Не питати більше» — лише кнопкою: голос, «так» у чаті й /voice-confirm нічого не запам'ятовують.
+  if (at !== undefined && p.remember) await remember($, t, p)
   if (p.kind === 'command') {
     await note($, t.noteAllowed(p.text))
     // Режим діє на те, що йде зараз: у clean «розпізнано» не додаємо і після картки.
@@ -877,6 +896,26 @@ async function approve($: EngineInterface, at?: number): Promise<void> {
   if (p.key) approvals.set(p.key, await $.clock.now())
   await note($, t.noteAllowedAction(p.text))
   submitVoice($, t, t.confirmedAction(p.text), null)
+}
+
+/** Дозволяє назавжди те, що на картці: команду (і схожі за змістом) чи інструмент цілком. */
+async function remember($: EngineInterface, t: Strings, p: VoicePending): Promise<void> {
+  const entry: VoiceAllowed | null =
+    p.kind === 'command' ? { kind: 'command', text: p.text } : p.tool ? { kind: 'tool', tool: p.tool } : null
+  if (!entry) return
+  const cur = (await read($, settings)).allowed
+  if (!cur.some(a => JSON.stringify(a) === JSON.stringify(entry))) await setSetting($, { allowed: [...cur, entry] })
+  await note($, t.noteRemembered(entry.kind === 'command' ? t.allowedCommand(entry.text) : t.allowedTool(entry.tool)))
+}
+
+/** Перемикач ☐/☑ на картці — лише тієї, яку людина бачила, і лише де галочка є. */
+async function toggleRemember($: EngineInterface, at: number): Promise<void> {
+  await update($, pending, p => (p && p.at === at && typeof p.remember === 'boolean' ? { ...p, remember: !p.remember } : p))
+}
+
+async function forget($: EngineInterface, i: number): Promise<void> {
+  const cur = (await read($, settings)).allowed
+  await setSetting($, { allowed: cur.filter((_, j) => j !== i) })
 }
 
 async function reject($: EngineInterface, why: 'cancelled' | 'late', at?: number): Promise<void> {
@@ -925,7 +964,7 @@ async function handleCommand($: EngineInterface, cmd: Queued): Promise<void> {
   const rest = cmd.isHandoff ? null : chatPhraseRest(raw, set.chat || DEFAULT_WORDS[set.language].chat)
   if (rest !== null) return switchChat($, t, rest, cmd.seq)
   // «off» — без моделі: лише локальний список; «clean» — не додаємо «(розпізнано: …)».
-  const f = set.filterMode === 'off' ? parseFilterReply(raw, null) : await filterCommand($, raw, set)
+  const f = set.filterMode === 'off' ? parseFilterReply(raw, null, allowedCommands(set)) : await filterCommand($, raw, set)
   if (f.risk === 'confirm') {
     const at = await $.clock.now()
     await update($, pending, () => ({
@@ -935,6 +974,7 @@ async function handleCommand($: EngineInterface, cmd: Queued): Promise<void> {
       reason: f.reason ?? 'ризикова команда', // ключ у t.reasons; показується перекладом
       at,
       key: null,
+      remember: false,
     }))
     $.ui.toast(t.toastConfirm(f.clean))
     return
@@ -1260,6 +1300,10 @@ export const register: Register = on => {
       const args = e as unknown as Record<string, unknown>
       const why = destructiveReason(e.tool, args)
       if (!why) return next(e)
+      // Дозволене назавжди (☑ на картці) — лише інструмент, який узагалі можна дозволити:
+      // запис «Bash» чи «CronCreate», вписаний у control.json руками, гвард не відчиняє.
+      const isAllowed = (await read($, settings)).allowed.some(a => a.kind === 'tool' && a.tool === e.tool)
+      if (isAllowed && isRememberable(e.tool, args)) return next(e)
       const key = callKey(e.tool, args)
       const okAt = approvals.get(key)
       if (okAt !== undefined && (await $.clock.now()) - okAt < APPROVAL_MS) {
@@ -1268,7 +1312,17 @@ export const register: Register = on => {
       }
       const text = describeCall(e.tool, args)
       const at = await $.clock.now()
-      await update($, pending, () => ({ kind: 'action' as const, text, raw: null, reason: why, at, key }))
+      const canRemember = isRememberable(e.tool, args)
+      await update($, pending, () => ({
+        kind: 'action' as const,
+        text,
+        raw: null,
+        reason: why,
+        at,
+        key,
+        tool: canRemember ? e.tool : null,
+        remember: canRemember ? false : null,
+      }))
       const t = await strings($)
       $.ui.toast(t.toastBlocked(reasonText(t, why)))
       return { deny: t.denyBlocked(reasonText(t, why)) }
@@ -1579,6 +1633,14 @@ export const register: Register = on => {
               </Text>
               <Button key="yes" label={t.yes} variant="primary" onPress={() => void approve($, wait.at).catch(() => {})} />
               <Button key="no" label={t.no} onPress={() => void reject($, 'cancelled', wait.at).catch(() => {})} />
+              {typeof wait.remember === 'boolean' ? (
+                <Button
+                  key="remember"
+                  label={wait.remember ? t.rememberOn : t.rememberOff}
+                  plain
+                  onPress={() => void toggleRemember($, wait.at).catch(() => {})}
+                />
+              ) : null}
             </Box>
             <Text size="footnote" dimColor>
               {t.why}: {reasonText(t, wait.reason)}.{' '}
@@ -2082,6 +2144,28 @@ export const register: Register = on => {
                 t.setSafe,
                 <Button key="safe" label={isSafe ? t.safeOn : t.safeOff} onPress={() => void setSafeMode($, !isSafe).catch(() => {})} />,
                 isSafe ? t.safeOnHint : t.safeOffHint,
+              ),
+              row(
+                'allowed',
+                t.setAllowed,
+                set.allowed.length ? null : (
+                  <Text key="allowed-empty" size="footnote" dimColor>
+                    {t.allowedEmpty}
+                  </Text>
+                ),
+                t.allowedHint,
+                set.allowed.length ? (
+                  <Box key="allowed-list" flexDirection="column">
+                    {set.allowed.map((a, i) => (
+                      <Box key={`allowed-${i}`} flexDirection="row" alignItems="center" columnGap={1}>
+                        <Text size="footnote" wrap="truncate-end">
+                          {a.kind === 'command' ? t.allowedCommand(a.text) : t.allowedTool(a.tool)}
+                        </Text>
+                        <Button key={`allowed-x-${i}`} label="✕" plain onPress={() => void forget($, i).catch(() => {})} />
+                      </Box>
+                    ))}
+                  </Box>
+                ) : null,
               ),
               row(
                 'chat',
