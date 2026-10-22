@@ -1696,6 +1696,7 @@ test('speak: голос перейшов у цю сесію (claim) → stop; у
   const w = world(on, 'B', {
     [BUS]: bus(T0, 5, []),
     [OWNER]: JSON.stringify({ session: 'A', at: T0 }),
+    [CONTROL]: JSON.stringify({ speak: true }),
   })
   await $.session.start(START)
   await w.clock.advance(500)
@@ -1711,6 +1712,61 @@ test('speak: голос перейшов у цю сесію (claim) → stop; у
 
   w.fs.delete(SPEAK)
   await $.command.run({ command: 'voice-here' } as never) // вже тут — перенесення нема
+  expect(speakOf(w)).toBeUndefined()
+})
+
+test('speak вимкнене: перший claim, набране людиною і «Сюди» — speak.json не пишеться зовсім', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) }) // control.json нема — озвучення типово вимкнене
+  await $.session.start(START)
+  await w.clock.advance(500)
+  expect(JSON.parse(w.fs.get(OWNER) ?? '{}').session).toBe('A') // перший claim відбувся
+  await $.prompt.submit({ text: 'зроби ще раз', origin: { kind: 'composer' }, wait: false } as never)
+  await w.clock.advance(500)
+  expect(speakOf(w)).toBeUndefined()
+
+  w.fs.set(OWNER, JSON.stringify({ session: 'B', at: T0 + 1000 }))
+  await w.clock.advance(500)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'here' })
+  await ui.unmount()
+  expect(JSON.parse(w.fs.get(OWNER) ?? '{}').session).toBe('A')
+  expect(speakOf(w)).toBeUndefined()
+})
+
+test('speak: мод увімкнули посеред сесії (без session.start) — набране людиною все одно зупиняє озвучку', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', {
+    [BUS]: bus(T0, 1, []),
+    [OWNER]: JSON.stringify({ session: 'A', at: T0 }),
+    [CONTROL]: JSON.stringify({ speak: true }),
+  })
+  await $.prompt.submit({ text: 'стоп', origin: { kind: 'composer' }, wait: false } as never)
+  await w.clock.advance(500)
+  expect(speakOf(w)).toMatchObject({ stop: true, session: 'A' })
+})
+
+async function handedOver(on: On, $: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], speak: boolean) {
+  const w = world(on, 'B', {
+    [BUS]: bus(T0, 1, []),
+    [OWNER]: JSON.stringify({ session: 'A', at: T0 }),
+    [CONTROL]: JSON.stringify({ speak }),
+  })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  expect(speakOf(w)).toBeUndefined()
+  w.fs.set(OWNER, JSON.stringify({ session: 'B', at: T0 + 500, handoff: { id: 'A:1', seq: 2, text: 'Перезапусти сервер.' } }))
+  await w.clock.advance(500)
+  await w.clock.advance(500)
+  expect(w.submitted).toEqual(['🎙 Перезапусти сервер.'])
+  return w
+}
+
+test('зміна чату: новий власник зупиняє озвучку попереднього', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await handedOver(on, $, true)
+  expect(speakOf(w)).toMatchObject({ stop: true, session: 'B' })
+})
+
+test('зміна чату: озвучення вимкнене — speak.json не пишеться', { timeoutMs: 15000 }, async ($, on) => {
+  const w = await handedOver(on, $, false)
   expect(speakOf(w)).toBeUndefined()
 })
 
@@ -1847,4 +1903,89 @@ test('рядок стану: speaking — «🔊 текст», кнопка ✖ 
   await band.press({ key: 'cancel' })
   await band.unmount()
   expect(typeof controlOf(w).cancelAt).toBe('number')
+})
+
+test('рядок стану: у speaking підказка ✖ — «Зупинити озвучку» (uk/en)', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'ready') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, ttsBus(T0 + 500, 'ready', { state: 'speaking', msg: 'Готово' }))
+  await w.clock.advance(500)
+  let band = await $.ui.mount(BAND)
+  expect(await band.find({ text: STR.uk.hintStopSpeaking })).toBeDefined()
+  expect(await band.find({ text: STR.uk.hintCancel })).toBeUndefined()
+  await band.unmount()
+  w.fs.set(BUS, ttsBus(T0 + 1000, 'ready', { state: 'armed', msg: 'запусти' }))
+  await w.clock.advance(500)
+  band = await $.ui.mount(BAND)
+  expect(await band.find({ text: STR.uk.hintCancel })).toBeDefined()
+  expect(await band.find({ text: STR.uk.hintStopSpeaking })).toBeUndefined()
+  await band.unmount()
+  expect(STR.en.hintStopSpeaking).toBe('Stop speaking')
+  expect(STR.uk.hintStopSpeaking).toBe('Зупинити озвучку')
+})
+
+test('🕘: озвучене (spoke) — блідо, як проміжне', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  w.fs.set(BUS, bus(T0 + 500, 3, [
+    { seq: 2, kind: 'spoke', text: 'Готово, тести пройшли' },
+    { seq: 3, kind: 'command', text: 'запусти тести' },
+  ]))
+  await w.clock.advance(500)
+  const band = await $.ui.mount(BAND)
+  await band.press({ key: 'history' })
+  const pane = await $.ui.mount(PANE)
+  expect((await pane.find({ type: 'Text', text: /Готово, тести пройшли/ }))?.props.dimColor).toBe(true)
+  expect((await pane.find({ type: 'Text', text: /запусти тести/ }))?.props.dimColor).toBeFalsy()
+  await pane.unmount()
+  await band.unmount()
+})
+
+test('⚙ озвучення: error — кнопка «Видалити озвучення» у «Розширених» (голосів нема)', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'error') })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const ui = await settingsUi(x => $.ui.mount(x))
+  expect(await ui.find({ key: 'ttsInstall' })).toBeDefined()
+  expect(await ui.find({ key: 'speakVoiceUk' })).toBeUndefined()
+  await ui.press({ key: 'ttsRemove' })
+  await ui.unmount()
+  expect(typeof controlOf(w).ttsRemove).toBe('number')
+})
+
+test('⚙ озвучення: слухач старої версії (у шині нема tts) — підказка перезапустити замість кнопки', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []) })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  const ui = await settingsUi(x => $.ui.mount(x))
+  expect(await ui.find({ key: 'ttsInstall' })).toBeUndefined()
+  expect(await ui.find({ key: 'ttsRemove' })).toBeUndefined()
+  expect(await ui.find({ text: STR.uk.ttsNeedRestart })).toBeDefined()
+  await ui.unmount()
+})
+
+test('⚙ озвучення: слухач не працює — підказка ↻; мікрофон вимкнено — підказка 🎤', { timeoutMs: 15000 }, async ($, on) => {
+  const w = world(on, 'A', { [BUS]: ttsBus(T0, 'absent'), [CONTROL]: '{"language":"en"}' })
+  await $.session.start(START)
+  await w.clock.advance(500)
+  let ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ key: 'ttsInstall' })).toBeDefined() // живий — кнопка є
+  await ui.unmount()
+
+  w.fs.set(BUS, ttsBus(T0, 'absent', { state: 'off' })) // слухач вийшов
+  w.fs.delete(`${HOME}\\venv\\Scripts\\python.exe`) // і підняти нового нема чим (не «запускається»)
+  await w.clock.advance(500)
+  ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ key: 'ttsInstall' })).toBeUndefined()
+  expect(await ui.find({ text: STR.en.ttsNeedRestart })).toBeDefined()
+  await ui.unmount()
+
+  w.fs.set(CONTROL, '{"language":"en","muted":true}')
+  await w.clock.advance(500)
+  ui = await $.ui.mount(SETTINGS)
+  expect(await ui.find({ key: 'ttsInstall' })).toBeUndefined()
+  expect(await ui.find({ text: STR.en.ttsNeedUnmute })).toBeDefined()
+  await ui.unmount()
 })

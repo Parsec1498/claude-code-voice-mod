@@ -87,6 +87,7 @@ export type Strings = {
   toastAuto: string
   toastPinned: string
   hintCancel: string
+  hintStopSpeaking: string
   hintMuteOn: string
   hintMuteOff: string
   hintSettingsShow: string
@@ -249,6 +250,8 @@ export type Strings = {
   ttsRetry: string
   ttsInstalling: string
   ttsInstallNote: string
+  ttsNeedRestart: string
+  ttsNeedUnmute: string
   groupSpeech: string
   setVoiceUk: string
   setVoiceEn: string
@@ -314,6 +317,7 @@ const uk: Strings = {
   toastAuto: 'Авто: голос іде за чатом, де ви пишете',
   toastPinned: 'Голос закріплено за цим чатом',
   hintCancel: 'Скасувати команду',
+  hintStopSpeaking: 'Зупинити озвучку',
   hintMuteOn: 'Увімкнути мікрофон',
   hintMuteOff: 'Вимкнути мікрофон',
   hintSettingsShow: 'Налаштування',
@@ -495,13 +499,15 @@ const uk: Strings = {
   ttsInstall: '⬇ Встановити озвучення (~140 МБ)',
   ttsRetry: '⬇ Повторити встановлення (~140 МБ)',
   ttsInstalling: 'Встановлюю озвучення…',
+  ttsNeedRestart: 'Встановлює озвучення слухач, а він не працює чи старої версії — перезапустіть його (↻ нижче).',
+  ttsNeedUnmute: 'Встановлює озвучення слухач, а з вимкненим мікрофоном він не працює — увімкніть мікрофон (🎤).',
   ttsInstallNote:
     'Piper (GPL-3.0) ставиться з PyPI окремо від мода, а голос — з Hugging Face. Нічого не качається, доки ви не натиснете кнопку.',
   groupSpeech: 'Озвучення',
   setVoiceUk: 'Голос (українська)',
   setVoiceEn: 'Голос (англійська)',
   voiceHint:
-    'Голоси з вільними ліцензіями. ⬇ — ще не завантажений: вибір такого і є згодою на завантаження; перше озвучення цим голосом триває довше.',
+    'Голоси з вільними ліцензіями. ⬇ — ще не завантажений: вибір такого і є згодою на завантаження — він качається одразу, а блоки, що прийдуть до кінця завантаження, не озвучуються.',
   ttsRemoveTitle: 'Встановлене озвучення',
   ttsRemove: 'Видалити озвучення',
   ttsRemoveHint: 'Прибирає Piper і всі голоси з диска й вимикає озвучення. Знову встановити можна кнопкою в ⚙.',
@@ -564,6 +570,7 @@ const en: Strings = {
   toastAuto: 'Auto: voice follows the chat you write in',
   toastPinned: 'Voice pinned to this chat',
   hintCancel: 'Cancel the command',
+  hintStopSpeaking: 'Stop speaking',
   hintMuteOn: 'Unmute the microphone',
   hintMuteOff: 'Mute the microphone',
   hintSettingsShow: 'Settings',
@@ -744,13 +751,15 @@ const en: Strings = {
   ttsInstall: '⬇ Install speech (~140 MB)',
   ttsRetry: '⬇ Retry installing (~140 MB)',
   ttsInstalling: 'Installing speech…',
+  ttsNeedRestart: 'Speech is installed by the listener, which is not running or is outdated — restart it (↻ below).',
+  ttsNeedUnmute: 'Speech is installed by the listener, which does not run while the microphone is off — turn the microphone on (🎤).',
   ttsInstallNote:
     'Piper (GPL-3.0) is installed from PyPI separately from the mod, and the voice comes from Hugging Face. Nothing is downloaded until you press the button.',
   groupSpeech: 'Speech',
   setVoiceUk: 'Voice (Ukrainian)',
   setVoiceEn: 'Voice (English)',
   voiceHint:
-    'Voices with free licenses. ⬇ — not downloaded yet: choosing it is your consent to download; the first speech with that voice takes longer.',
+    'Voices with free licenses. ⬇ — not downloaded yet: choosing it is your consent to download — the download starts right away, and blocks that arrive before it finishes are not spoken.',
   ttsRemoveTitle: 'Installed speech',
   ttsRemove: 'Remove speech',
   ttsRemoveHint: 'Deletes Piper and all voices from the disk and turns speech off. You can install it again with the button in ⚙.',

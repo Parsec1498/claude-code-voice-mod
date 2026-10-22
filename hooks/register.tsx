@@ -139,6 +139,8 @@ const device = atom({ plugin: 'voice-mod', key: 'device' } as const, 'cuda')
 // Модуль озвучення (Piper) і голоси на диску — звітує слухач у bus.json, як models.
 const tts = atom({ plugin: 'voice-mod', key: 'tts' } as const, 'absent')
 const voices = atom({ plugin: 'voice-mod', key: 'voices' } as const, [])
+// Кнопки ⚙ озвучення виконує слухач: не працює — у ⚙ підказка замість мертвої кнопки.
+const listener = atom({ plugin: 'voice-mod', key: 'listener' } as const, 'down')
 
 // Короткі підписи для рядка панелі: він один, поруч іще останнє почуте й кнопки.
 const shortOf = (t: Strings, state: VoiceState): string =>
@@ -258,7 +260,9 @@ export function isLockedOf(o: Owner | null, now: number): boolean {
 }
 
 // Живуть до перезавантаження мода (новий модуль — нові змінні); стан панелі — в атомах.
-let isBooted = false
+// Обіцянка першого boot: паралельні виклики (prompt.submit і stop) чекають той самий, а не
+// виходять одразу з ще порожнім mySession.
+let booting: Promise<void> | undefined
 let mySession = ''
 let lastSeq = -1 // -1: ще не читали bus — старі команди не повторюємо
 let shownSeq = -1
@@ -334,6 +338,12 @@ async function sendSpeak(
   await requestSpeak($, { seq: at, at, session: mySession, ...body })
 }
 
+/** stop — лише коли озвучення ввімкнене: вимкнене не пише жодного файлу (слухач і так
+ * замовкає сам, щойно в control.json speak: false). */
+async function stopSpeaking($: EngineInterface): Promise<void> {
+  if ((await read($, settings)).speak) await sendSpeak($, { stop: true })
+}
+
 async function readJson($: EngineInterface, path: string): Promise<string | null> {
   try {
     if (!(await $.fs.exists(path))) return null
@@ -397,7 +407,7 @@ function claim($: EngineInterface, how: 'auto' | 'explicit', why: Why): Promise<
     await update($, owner, () => 'me')
     await update($, locked, () => isLocked)
     // Голос перейшов сюди (був чужий чи нікого) — що б не говорилось у чаті попереднього власника, зупинити.
-    if (ownerOf(o, mySession, now) !== 'me') await sendSpeak($, { stop: true }).catch(() => {})
+    if (ownerOf(o, mySession, now) !== 'me') await stopSpeaking($).catch(() => {})
   })
 }
 
@@ -449,6 +459,8 @@ function takeHandoff($: EngineInterface, t: Strings, now: number): Promise<void>
     await note($, t.noteChatArrived(hand.text))
     await $.fs.write(p.owner, JSON.stringify({ session: mySession, at: now, locked: fresh?.locked === true, why: fresh?.why ?? 'voice' }))
     lastOwnerBeat = now
+    // Голос перейшов сюди — що говорилось у чаті попереднього власника, замовкає.
+    await stopSpeaking($).catch(() => {})
   })
 }
 
@@ -679,8 +691,11 @@ async function tick($: EngineInterface): Promise<void> {
     const dev = bus.device
     await update($, device, () => dev)
   }
-  if (bus?.tts && (await read($, tts)) !== bus.tts) {
-    const st = bus.tts
+  // Нема поля tts у шині живого слухача — це слухач старої версії (null); у вже мертвій шині
+  // відсутність поля нічого не каже — лишаємо, що знали.
+  const busTts = bus === null ? undefined : (bus.tts ?? (isAlive ? null : undefined))
+  if (busTts !== undefined && (await read($, tts)) !== busTts) {
+    const st = busTts
     const wasInstalling = (await read($, tts)) === 'installing'
     await update($, tts, () => st)
     // Щойно встановили — одразу вмикаємо (один раз); далі перемикач у людини.
@@ -701,14 +716,22 @@ async function tick($: EngineInterface): Promise<void> {
   }
 
   // Мікрофон вимкнено — слухача не піднімаємо зовсім (живий сам вийде за хвилину).
+  let noPython = false
   if (!isAlive && !isMuted && !daemon && now - lastSpawnAt > SPAWN_GAP_MS) {
     if (await $.fs.exists(p.python)) {
       lastSpawnAt = now
       void runDaemon($, p).catch(() => {})
     } else {
-      await update($, status, () => ({ state: 'error' as const, msg: t.noPython(p.python) }))
-      return
+      noPython = true
     }
+  }
+  // «Запускається» — і поки живий дочірній процес, і поки відв'язаний слухач ще не написав шину.
+  const isStarting = !noPython && (daemon !== undefined || now - lastSpawnAt <= SPAWN_GAP_MS)
+  const up = isAlive ? 'up' : isMuted ? 'muted' : isStarting ? 'starting' : 'down'
+  if ((await read($, listener)) !== up) await update($, listener, () => up)
+  if (noPython) {
+    await update($, status, () => ({ state: 'error' as const, msg: t.noPython(p.python) }))
+    return
   }
 
   const o = await readOwner($, p)
@@ -1088,9 +1111,12 @@ async function setHistory($: EngineInterface, isOpen: boolean): Promise<void> {
   else await $.ui.close({ id: PANE })
 }
 
-async function boot($: EngineInterface): Promise<void> {
-  if (isBooted) return
-  isBooted = true
+function boot($: EngineInterface): Promise<void> {
+  booting ??= bootOnce($)
+  return booting
+}
+
+async function bootOnce($: EngineInterface): Promise<void> {
   mySession = await $.session.id()
   // Мову беремо з control.json одразу: тік ще не відпрацював, а описи команд — з першого разу правильні.
   const p = await paths($)
@@ -1160,8 +1186,9 @@ async function speakAnswer($: EngineInterface, answer: string): Promise<void> {
 
 /** Людина набрала текст у чаті-власнику — що говориться, замовкає. Голосова команда (🎙) не рахується. */
 async function stopSpeakIfOwner($: EngineInterface): Promise<void> {
+  await boot($)
   const p = await paths($)
-  if (ownerOf(await readOwner($, p), mySession, await $.clock.now()) === 'me') await sendSpeak($, { stop: true })
+  if (ownerOf(await readOwner($, p), mySession, await $.clock.now()) === 'me') await stopSpeaking($)
 }
 
 /** Кнопка «Встановити озвучення»: Piper і голос слухач ставить сам, лише після цього натиску. */
@@ -1419,7 +1446,13 @@ export const register: Register = on => {
     const tools: { key: string; glyph: string; hint: string; press: () => unknown; primary?: boolean }[] = [
       // ✖ — лише коли слухач уже в режимі команди (почув активатор / слухає чи розпізнає команду) або говорить.
       ...(s.state === 'armed' || s.state === 'transcribing' || s.state === 'speaking'
-        ? [{ key: 'cancel', glyph: '✖', hint: t.hintCancel, press: () => cancelCommand($), primary: true }]
+        ? [{
+            key: 'cancel',
+            glyph: '✖',
+            hint: s.state === 'speaking' ? t.hintStopSpeaking : t.hintCancel,
+            press: () => cancelCommand($),
+            primary: true,
+          }]
         : []),
       // Не власник — 🎧 «Сюди»; власник — режим: «Авто» (за чатом, де пишуть) чи «Закріплено».
       who !== 'me'
@@ -1573,7 +1606,7 @@ export const register: Register = on => {
           <Text
             key={`l${it.seq}`}
             size="footnote"
-            dimColor={it.kind === 'ignored' || it.kind === 'info' || it.kind === 'part'}
+            dimColor={it.kind === 'ignored' || it.kind === 'info' || it.kind === 'part' || it.kind === 'spoke'}
             color={it.kind === 'error' ? 'error' : it.kind === 'cancelled' ? 'warning' : undefined}
           >
             {it.kind === 'command' ? '→ ' : it.kind === 'error' ? '! ' : it.kind === 'part' ? '… ' : it.kind === 'cancelled' ? '' : '· '}
@@ -1606,6 +1639,18 @@ export const register: Register = on => {
     const dev = await read($, device)
     const ttsState = await read($, tts)
     const voiceList = new Set(await read($, voices))
+    // Встановлює й видаляє слухач: старої версії (tts null) чи не працює — кнопка була б мертвою.
+    const up = await read($, listener)
+    const ttsWait =
+      ttsState === 'ready' || ttsState === 'installing'
+        ? null
+        : up === 'muted'
+          ? t.ttsNeedUnmute
+          : up === 'starting'
+            ? t.starting
+            : up === 'down' || ttsState === null
+              ? t.ttsNeedRestart
+              : null
     const progress = (await read($, status)).msg
     const defaults = DEFAULT_WORDS[set.language]
     const stopWord = firstWord(set.stop, defaults.stop)
@@ -1777,6 +1822,10 @@ export const register: Register = on => {
             <Text key="ttsProgress" size="footnote" color="suggestion" wrap="truncate-end">
               {progress ?? t.ttsInstalling}
             </Text>
+          ) : ttsWait ? (
+            <Text key="ttsWait" size="footnote" color="warning">
+              {ttsWait}
+            </Text>
           ) : (
             <Button
               key="ttsInstall"
@@ -1785,7 +1834,7 @@ export const register: Register = on => {
             />
           ),
           t.speakHint,
-          ttsState === 'ready' || ttsState === 'installing' ? null : (
+          ttsState === 'ready' || ttsState === 'installing' || ttsWait ? null : (
             <Box key="ttsNote">
               <Text size="footnote" dimColor>
                 {t.ttsInstallNote}
@@ -1981,9 +2030,11 @@ export const register: Register = on => {
                     ),
                   ]
                 : []),
+              ...(ttsState === 'ready' || ttsState === 'error'
+                ? [group('speech', t.groupSpeech)]
+                : []),
               ...(ttsState === 'ready'
                 ? [
-                    group('speech', t.groupSpeech),
                     row(
                       'speakVoiceUk',
                       t.setVoiceUk,
@@ -2006,6 +2057,12 @@ export const register: Register = on => {
                       />,
                       t.voiceHint,
                     ),
+                  ]
+                : []),
+              // Видалити можна й після збою: недороблене встановлення інакше лишалось би на диску.
+              // Видаляє слухач: поки він не працює, натиск загубився б — кнопки не показуємо.
+              ...((ttsState === 'ready' || ttsState === 'error') && up === 'up'
+                ? [
                     row(
                       'ttsRemove',
                       t.ttsRemoveTitle,
