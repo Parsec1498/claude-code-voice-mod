@@ -83,8 +83,8 @@ corrections glossary with «Generate» and «Open», agents extending the glossa
 *Command processing* (raw / cleaned + raw / cleaned only, model, timeout, the model's full
 instruction — editable, «Default» restores it — and short additions), *Safety and chats*
 (safe mode, the switch-chat phrase). A fourth group, *Speech*, appears once spoken answers
-are installed: a voice for Ukrainian, a voice for English and «Remove speech». Every field has
-an ⓘ hint.
+are installed: a voice for Ukrainian, a voice for English and «Remove speech» (also shown after
+a failed install, to clean it up). Every field has an ⓘ hint.
 
 ## Spoken answers (optional)
 
@@ -95,7 +95,9 @@ Off by default and not installed: without it the mod is complete and nothing bel
    engine [Piper](https://github.com/OHF-Voice/piper1-gpl) (`piper-tts` 1.8.0, GPL-3.0-or-later,
    ~60 MB from PyPI), downloads one voice (~60–80 MB from Hugging Face; the default voice of
    your interface language) and synthesizes a test phrase. When it is ready, «Speak answers»
-   turns on.
+   turns on. The listener does the installing, so while it is not running ⚙ shows a hint instead
+   of the button: turn the microphone on, or restart the listener (↻) — also after updating the
+   mod, when the running listener is still the old one.
 2. While it is on, the agent gets one extra system-prompt section: at the end of its **final**
    answer of a turn it writes a short block — one to three plain sentences, up to ~300
    characters, starting with `🔊 Speak:` — and the mod reads out only that block (cleaned of
@@ -113,8 +115,9 @@ by voice. A block that arrives in the middle of your dictation waits for it (up 
 it is dropped).
 
 **Voices.** In ⚙ → Advanced → *Speech* choose a voice per language. A voice marked ⬇ is not on
-disk: choosing it is your consent to download it (21–114 MB). Only voices whose dataset licence
-is free are offered:
+disk: choosing it is your consent to download it (21–114 MB); the download starts right away, and
+blocks that arrive before it finishes are not spoken. Only voices whose dataset licence is free
+are offered:
 
 | Licence | Voices |
 | --- | --- |

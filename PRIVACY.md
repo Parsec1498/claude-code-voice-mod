@@ -25,7 +25,8 @@ the prompt is not changed.
 **Stored on your computer** (in `%USERPROFILE%\.claude\voice-mod`): settings, the last 40
 recognized phrases, which chat currently receives voice, your glossary, the Python
 environment and the speech models; with spoken answers also the last block to be spoken
-(`speak.json`), the speech environment and voices (`tts\`) and two diagnostic logs
+(`speak.json`, written only while speech is on), the speech environment and voices (`tts\`)
+and two diagnostic logs
 (`tts.log`, `speak.log`). Delete the folder to remove all of it; «Remove speech» in the
 settings deletes only the speech part.
 
