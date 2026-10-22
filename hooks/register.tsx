@@ -1112,7 +1112,12 @@ async function setHistory($: EngineInterface, isOpen: boolean): Promise<void> {
 }
 
 function boot($: EngineInterface): Promise<void> {
-  booting ??= bootOnce($)
+  // Збій запуску не кешуємо: наступний виклик спробує знову (ticker ставиться останнім кроком bootOnce,
+  // реєстрації команд/інструмента ідемпотентні).
+  booting ??= bootOnce($).catch(err => {
+    booting = undefined
+    throw err
+  })
   return booting
 }
 

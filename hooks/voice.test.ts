@@ -59,7 +59,15 @@ function world(on: On, session: string, files: Record<string, string>, replies: 
   on('session.root', async () => ({ value: 'D:\\Dev\\app' }))
   on('tool.register', async (_$, e) => ({ value: { tool: `mcp__voice-mod__${e.name}` } }) as never)
   on('ui.invalidate', () => ({ value: undefined }) as never)
-  on('session.id', async () => ({ value: session }))
+  const sessionId = { fails: 0, calls: 0 } // fails > 0 — наступні виклики session.id кидають (збій запуску мода)
+  on('session.id', async () => {
+    sessionId.calls++
+    if (sessionId.fails > 0) {
+      sessionId.fails--
+      throw new Error('session.id: збій')
+    }
+    return { value: session }
+  })
   const commands: { name: string; description: string }[] = [] // усі виклики command.register
   on('command.register', async (_$, e) => {
     commands.push({ name: e.name, description: String(e.description) })
@@ -109,7 +117,7 @@ function world(on: On, session: string, files: Record<string, string>, replies: 
     await new Promise<void>(r => next.signal.addEventListener('abort', () => r()))
     return { value: { code: 0, signal: null } }
   })
-  return { clock, fs, submitted, spawned, calls, ran, panes, commands, agents, spawnedAgents, toasts }
+  return { clock, fs, submitted, spawned, calls, ran, panes, commands, agents, spawnedAgents, toasts, sessionId }
 }
 
 const START = { cwd: 'D:\\Dev', surface: 'desktop', isInteractive: true } as const
@@ -1589,6 +1597,22 @@ test('prompt.compose: озвучення ввімкнене — остання �
   const en = (await $.prompt.compose(COMPOSE_INPUT)).sections
   expect(en[en.length - 1]?.text).toContain('🔊 Speak:')
   expect((await $.prompt.compose(COMPOSE_INPUT)).sections).toEqual(en) // двічі поспіль — той самий текст (кеш)
+})
+
+test('boot: невдалий перший запуск повторюється на наступному хуку, вдалий — виконується один раз', async ($, on) => {
+  const w = world(on, 'A', { [BUS]: bus(T0, 1, []), [CONTROL]: JSON.stringify({ speak: true, language: 'uk' }) })
+  on('prompt.compose', async () => ({ sections: BASE_SECTIONS }))
+  w.sessionId.fails = 1
+  await $.session.start(START) // перший boot упав; рушій збій хука не пробиває далі
+  expect(w.sessionId.calls).toBe(1)
+
+  const first = (await $.prompt.compose(COMPOSE_INPUT)).sections // boot повторено → секція озвучення на місці
+  expect(first[first.length - 1]).toMatchObject({ id: 'voice-mod:speak' })
+  expect(w.sessionId.calls).toBe(2)
+
+  await $.prompt.compose(COMPOSE_INPUT)
+  await $.command.run({ command: 'voice-panel' } as never)
+  expect(w.sessionId.calls).toBe(2) // вдалий boot не повторюється
 })
 
 // ── speak.json: запит озвучки й зупинка ─────────────────────────────────────────────
